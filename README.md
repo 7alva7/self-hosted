@@ -77,14 +77,14 @@ By default Webtor uses an embedded PostgreSQL database. You can configure the da
 
 ## Configuring Transcoding
 
-- **DISABLE_VIDEO_TRANSCODING** - disables video transcoding
+- **DISABLE_VIDEO_TRANSCODING** - disables video transcoding (default: false)
 
 ## Disable UI Features
 
-- **DISABLE_WEBDAV** - disables WebDAV interface
-- **DISABLE_EMBED** - disables embeds support
+- **DISABLE_WEBDAV** - disables WebDAV interface (default: false)
+- **DISABLE_EMBED** - disables embeds support (default: false)
 
 ## Other Custom Variables
 
-- **WAIT_FOR_VPN** - waits for VPN to start (in case you are using Gluetun)
+- **WAIT_FOR_VPN** - waits for VPN to start (in case you are using Gluetun) (default: false)
 - **REQUEST_URL_MAPPINGS** - custom mappings for request urls
