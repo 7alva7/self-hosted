@@ -16,14 +16,34 @@ assert_eq() {
 }
 
 # wait_for <timeout-sec> <description> <command...>
+# Retries until the command succeeds or the timeout expires. On timeout the last
+# attempt's exit status and combined output are reported: without them every
+# failure looks identical, and "rejected immediately" (e.g. a 403) is
+# indistinguishable from "genuinely still unavailable".
+WAIT_FOR_OUTPUT_LIMIT="${WAIT_FOR_OUTPUT_LIMIT:-500}"
 wait_for() {
   local timeout="$1" desc="$2"
   shift 2
   local deadline=$((SECONDS + timeout))
-  until "$@" >/dev/null 2>&1; do
-    [ "$SECONDS" -lt "$deadline" ] || fail "timed out after ${timeout}s waiting for: $desc"
+  local out rc detail
+  while true; do
+    # Assignment is the non-final operand of &&, so a failure here does not
+    # trip `set -e`; it falls through to the deadline check below.
+    out="$("$@" 2>&1)" && return 0
+    rc=$?
+    [ "$SECONDS" -lt "$deadline" ] || break
     sleep 1
   done
+
+  detail="$(printf '%s' "$out" | head -c "$WAIT_FOR_OUTPUT_LIMIT")"
+  if [ "${#out}" -gt "$WAIT_FOR_OUTPUT_LIMIT" ]; then
+    detail="$detail ...[truncated, ${#out} bytes total]"
+  fi
+  [ -n "$detail" ] || detail='(no output)'
+  fail "timed out after ${timeout}s waiting for: $desc
+  last attempt: '$*'
+  exit status:  $rc
+  output:       $detail"
 }
 
 # api <method> <path> [extra curl args...]
