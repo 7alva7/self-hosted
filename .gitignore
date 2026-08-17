@@ -22,3 +22,8 @@ tmp
 
 # SDD scratch workspace
 .superpowers/
+
+# Generated test fixture artifacts (rebuilt by tests/fixtures/build.sh)
+tests/fixtures/content/
+tests/fixtures/*.torrent
+tests/fixtures/summary.json
