@@ -2,25 +2,58 @@
 # Upload the fixture torrent, list it, download a file, verify bytes.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
-json() { python3 -c "import json,sys;print($1)"; }
+# jget <json-doc> <python-expr> <description>
+# Evaluates the expression with `d` bound to the parsed document and a `walk(n)`
+# generator that yields every entry under `n`, at any depth. A parse or lookup
+# failure is reported with the offending response: `fail` runs in the command
+# substitution's subshell, so its message reaches stderr and the resulting
+# non-zero status trips `set -e` in the caller. (The previous
+# `x="$(...)"; [ -n "$x" ] || fail ...` form could never run its guard --
+# `set -e` aborted on the assignment first, leaving a bare Python traceback.)
+jget() {
+  local doc="$1" expr="$2" what="$3" val
+  if ! val="$(printf '%s' "$doc" | python3 -c "
+import json, sys
+
+def walk(n):
+    for it in (n.get('items') or []):
+        yield it
+        for sub in walk(it):
+            yield sub
+
+d = json.load(sys.stdin)
+print($expr)
+" 2>&1)"; then
+    fail "$what: could not extract it -- $val
+  from response: $doc"
+  fi
+  printf '%s' "$val"
+}
 
 resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
-id="$(printf '%s' "$resource" | json 'json.load(sys.stdin)["id"]')"
-[ -n "$id" ] || fail "no resource id in response: $resource"
+id="$(jget "$resource" 'd["id"]' 'resource id')"
 
-expected_ih="$(json 'json.load(open("'"$FIXTURE_DIR"'/summary.json"))["infohash"]' </dev/null)"
+expected_ih="$(jget "$(cat "$FIXTURE_DIR/summary.json")" 'd["infohash"]' 'fixture infohash')"
 assert_eq "$id" "$expected_ih" "resource id must equal fixture infohash"
 
+# `path=/` currently returns a flattened recursive listing, but `walk` also
+# handles children nested under their directory entry, so this assertion pins
+# the contract that matters -- every fixture file is reachable -- either way.
 listing="$(api GET "/rest-api/resource/$id/list?path=/")"
-count="$(printf '%s' "$listing" | json 'len(json.load(sys.stdin)["items"])')"
-[ "$count" -ge 3 ] || fail "expected at least 3 items in root listing, got $count: $listing"
+names="$(jget "$listing" \
+  '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
+  'listed file names')"
+for want in video.mp4 readme.txt subtitle.srt; do
+  printf '%s\n' "$names" | grep -qx -- "$want" \
+    || fail "fixture file '$want' missing from listing (found: $(printf '%s' "$names" | tr '\n' ' ')): $listing"
+done
 
-content_id="$(printf '%s' "$listing" | json '[i for i in json.load(sys.stdin)["items"] if i["name"]=="video.mp4"][0]["id"]')"
-[ -n "$content_id" ] || fail "video.mp4 not found in listing: $listing"
+content_id="$(jget "$listing" \
+  '[i["id"] for i in walk(d) if i.get("name") == "video.mp4"][0]' \
+  'video.mp4 content id')"
 
 export_json="$(api GET "/rest-api/resource/$id/export/$content_id")"
-url="$(printf '%s' "$export_json" | json 'json.load(sys.stdin)["exports"]["download"]["url"]')"
-[ -n "$url" ] || fail "no download url: $export_json"
+url="$(jget "$export_json" 'd["exports"]["download"]["url"]' 'download url')"
 
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
