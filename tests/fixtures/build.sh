@@ -10,13 +10,16 @@ root="$content/webtor-smoke"
 rm -rf "$content"
 mkdir -p "$root/subs"
 
-docker run --rm -v "$content:/out" jrottenberg/ffmpeg:8-alpine \
+# Mount the stable parent dir, not "$content": "$content" was just replaced by
+# rm -rf/mkdir, and Docker Desktop resolves a bind-mount source at mount time,
+# so a freshly recreated mount root can appear empty inside the container.
+docker run --rm -v "$here:/out" jrottenberg/ffmpeg:8-alpine \
   -nostdin -y \
   -f lavfi -i "testsrc=size=320x240:rate=15:duration=10" \
   -f lavfi -i "sine=frequency=440:duration=10" \
   -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
   -c:a aac -shortest \
-  /out/webtor-smoke/video.mp4
+  /out/content/webtor-smoke/video.mp4
 
 printf 'webtor self-hosted smoke fixture\n' > "$root/readme.txt"
 
