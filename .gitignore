@@ -19,3 +19,6 @@ tmp
 .env
 
 .idea
+
+# SDD scratch workspace
+.superpowers/
