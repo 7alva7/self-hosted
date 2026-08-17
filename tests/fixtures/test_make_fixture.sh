@@ -27,6 +27,25 @@ total="$(get "['total_length']")"
 [ "$(get "['pieces_count']")" = "4" ] || { echo "FAIL: wrong pieces_count"; exit 1; }
 ih="$(get "['infohash']")"
 printf '%s' "$ih" | grep -Eq '^[0-9a-f]{40}$' || { echo "FAIL: bad infohash $ih"; exit 1; }
+
+# Exact files list (path + order + length), not just count. Sorted-path
+# order for this synthetic tree: readme.txt, subs/subtitle.srt, video.mp4.
+# A generator bug that reorders files, mismatches a path to the wrong
+# content, or hashes pieces out of manifest order would slip past a
+# len(files)==3 check but must fail here.
+expected_files='[{"path": "readme.txt", "length": 6}, {"path": "subs/subtitle.srt", "length": 35}, {"path": "video.mp4", "length": 100000}]'
+actual_files="$(printf '%s' "$summary" | python3 -c "import json,sys;print(json.dumps(json.load(sys.stdin)['files']))")"
+[ "$(python3 -c "import json;print(json.loads('''$actual_files''') == json.loads('''$expected_files'''))")" = "True" ] \
+  || { echo "FAIL: files list mismatch, got: $actual_files"; exit 1; }
+
+# Pin the infohash to a known value. The synthetic tree above is
+# byte-deterministic (fixed content, fixed piece length, fixed webseed
+# URL), so the infohash is fixed too. Recompute this constant (rerun this
+# script and copy the printed infohash) if the synthetic tree above, the
+# PIECE_LENGTH in make_fixture.py, or the webseed URL passed below changes.
+expected_infohash="682d2e605dbd38c276f46800c28a4fa3d23ee436"
+[ "$ih" = "$expected_infohash" ] \
+  || { echo "FAIL: infohash=$ih, expected $expected_infohash"; exit 1; }
 # BEP19 webseed must be present in the bencoded output
 # -a: force text-mode scan (the pieces blob contains arbitrary bytes,
 # including NUL, which BSD grep otherwise treats as a binary file).
