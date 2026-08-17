@@ -47,15 +47,24 @@ trap 'rm -rf "$out"' EXIT
 # Cold archive builds under amd64 emulation can be slow; allow for that.
 wait_for 180 "archive url to serve bytes" curl -fsS -o "$out/subs.zip" "$url"
 
-python3 - "$out/subs.zip" <<'EOF'
+python3 - "$out/subs.zip" "$FIXTURE_DIR/content/webtor-smoke/subs/subtitle.srt" <<'EOF'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     bad = z.testzip()
     if bad is not None:
         raise SystemExit("corrupt entry in zip: %s" % bad)
     names = z.namelist()
-    if not any(n.endswith("subtitle.srt") for n in names):
+    matches = [n for n in names if n.endswith("subtitle.srt")]
+    if not matches:
         raise SystemExit("subtitle.srt missing from archive: %s" % names)
+    got = z.read(matches[0])
+    with open(sys.argv[2], "rb") as f:
+        want = f.read()
+    if got != want:
+        raise SystemExit(
+            "subtitle.srt content mismatch: archive entry %r is %d bytes, "
+            "fixture is %d bytes" % (matches[0], len(got), len(want))
+        )
 print("zip ok")
 EOF
 
