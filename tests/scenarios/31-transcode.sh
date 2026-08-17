@@ -77,12 +77,37 @@ case "$vod_url" in
 esac
 prefix="${vod_url%%~vod/*}"
 query="${vod_url#*\?}"
-url="${prefix}~hls/index.m3u8?${query}"
+base="${prefix}~hls"
+
+# content-transcoder is session-based since upstream commit 76cc495
+# ("replace legacy transcoding with session-based architecture", 2026-03-15):
+# the old `~hls/index.m3u8` entry point is gone and now 404s. A client first
+# POSTs `~hls/session` to get {id, duration}, then reads the master playlist at
+# `~hls/session/<id>/index.m3u8`. This mirrors exactly what web-ui does today
+# (web-ui `jobs/scripts/hls.go` -> `api.CreateTranscoderSession` ->
+# `sessionHLSURL`), so the scenario exercises the real production client flow.
+#
+# Cold start: creating the session probes the media and spins up FFmpeg, so
+# give it the same budget the manifest fetch used to get.
+session_json="$(mktemp)"
+trap 'rm -f "$session_json"' EXIT
+wait_for 300 "content-transcoder session creation" \
+  curl -fsS -X POST -o "$session_json" "${base}/session?${query}"
+
+session_id="$(jget "$(cat "$session_json")" 'd["id"]' 'transcoder session id')"
+[ -n "$session_id" ] || fail "transcoder session id is empty: $(cat "$session_json")"
+# The session document also carries the probed duration. A stub/error response
+# could still parse as JSON with an id; requiring a positive duration proves
+# content-transcoder actually probed the fixture media (10s) rather than
+# handing back an empty shell.
+duration="$(jget "$(cat "$session_json")" 'd["duration"]' 'transcoder session duration')"
+python3 -c "import sys; sys.exit(0 if float('$duration') > 0 else 1)" \
+  || fail "transcoder session reports non-positive duration ($duration), media was not probed: $(cat "$session_json")"
+
+url="${base}/session/${session_id}/index.m3u8?${query}"
 
 manifest="$(mktemp)"
-trap 'rm -f "$manifest"' EXIT
-# Cold start: content-transcoder must spin up FFmpeg and produce the first
-# segments, same cold-start budget as the nginx-vod path in 30-hls.sh.
+trap 'rm -f "$manifest" "$session_json"' EXIT
 wait_for 300 "content-transcoder HLS manifest" curl -fsS -o "$manifest" "$url"
 
 head -1 "$manifest" | grep -q '#EXTM3U' || fail "not an m3u8: $(head -3 "$manifest")"
@@ -122,10 +147,23 @@ size="$(wc -c < "$seg")"
 # log and the transcoder's own log prove which service actually served this.
 compose=(docker compose -f "$TESTS_DIR/docker-compose.yml" -p webtor-smoke)
 logs="$("${compose[@]}" logs webtor 2>&1)"
-printf '%s' "$logs" | grep -q 'edge=content-transcoder' \
-  || fail "torrent-http-proxy access log never shows edge=content-transcoder -- the ~hls request did not route through the transcoder: $(printf '%s' "$logs" | tail -40)"
-printf '%s' "$logs" | grep -qi 'transcoding finished' \
-  || fail "content-transcoder log never reports a completed transcode: $(printf '%s' "$logs" | grep -i content-transcoder | tail -40)"
+# NB: these use here-strings, not `printf ... | grep -q`. Under `set -o
+# pipefail` (from lib.sh) that pipeline is a coin flip: `grep -q` exits the
+# moment it matches, printf then takes SIGPIPE on its remaining write, and the
+# *pipeline* reports failure even though the assertion held. It only bites once
+# the log is big enough for printf not to finish in one write -- which the
+# session flow's extra requests made routine. A here-string has no pipe.
+grep -q 'edge=content-transcoder' <<<"$logs" \
+  || fail "torrent-http-proxy access log never shows edge=content-transcoder -- the ~hls request did not route through the transcoder: $(tail -40 <<<"$logs")"
+# The session-based transcoder no longer logs "transcoding finished"; the
+# equivalent proof that a real FFmpeg run happened for *this* session is the
+# session-creation line plus a normally-terminating ffmpeg run. Requiring both
+# is strictly stronger than the single old grep: the first pins the session to
+# the id this scenario created, the second pins an actual encode completing.
+grep -q "sessionManager: created session.*sessionID=$session_id" <<<"$logs" \
+  || fail "content-transcoder log never reports creating session $session_id: $(grep -i content-transcoder <<<"$logs" | tail -40)"
+grep -q 'run: ffmpeg finished normally' <<<"$logs" \
+  || fail "content-transcoder log never reports a completed ffmpeg run: $(grep -i content-transcoder <<<"$logs" | tail -40)"
 
 # A size check alone would pass for an HTML error page of similar size. Probe
 # the segment with ffprobe to confirm it is real, decodable H.264 video with
