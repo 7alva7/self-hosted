@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # The video streams as HLS: manifest is served, segments download, and a
 # downloaded segment is real decodable media -- not an error page or a
-# truncated file. Exercises content-transcoder + nginx-vod + torrent-http-proxy
-# together; the only scenario that does.
+# truncated file. This exercises torrent-http-proxy routing to nginx-vod,
+# which remuxes the already-H.264/AAC fixture straight into HLS segments
+# without invoking content-transcoder (nginx-vod's vod module only re-packages
+# a container that's already codec-compatible; no re-encode needed). The
+# transcoder itself -- the ~hls export leg, which forces a real FFmpeg
+# encode -- is covered separately by 31-transcode.sh.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 # jget <json-doc> <python-expr> <description>
@@ -36,8 +40,10 @@ print($expr)
 #   - an absolute path (/...): joined against the playlist URL's origin
 #   - a relative name (no leading slash): joined against the playlist URL's
 #     directory
-# Getting this wrong silently breaks HLS chains that use absolute paths --
-# which is exactly what nginx-vod emits here (see report for the observed form).
+# Getting this wrong silently breaks HLS chains that use absolute paths or
+# full URLs. nginx-vod, as observed here, only ever emits the relative form
+# (e.g. "s-1-v1-a1.ts?api-key=...&token=..."); the other two branches are
+# handled for correctness per RFC 8216 but are not exercised by this system.
 resolve_url() {
   local playlist_url="$1" entry="$2"
   case "$entry" in
@@ -48,7 +54,14 @@ resolve_url() {
       origin="$origin${rest%%/*}"
       printf '%s%s' "$origin" "$entry"
       ;;
-    *) printf '%s/%s' "${playlist_url%/*}" "$entry" ;;
+    *)
+      # Strip the playlist URL's own query string before chopping at the last
+      # "/" -- otherwise a query value containing "/" (e.g. a token encoded
+      # with plain base64 rather than base64url) would truncate the path
+      # inside the query and produce a garbage, confusingly-404ing URL.
+      local no_query="${playlist_url%%\?*}"
+      printf '%s/%s' "${no_query%/*}" "$entry"
+      ;;
   esac
 }
 
@@ -99,8 +112,10 @@ size="$(wc -c < "$seg")"
 
 # A size check alone would pass for an HTML error page of similar size. Probe
 # the segment with ffprobe to confirm it is real, decodable H.264 video with
-# the fixture's known resolution -- proof that content-transcoder actually
-# transcoded the fixture rather than nginx-vod serving garbage bytes.
+# the fixture's known resolution -- proof that nginx-vod served a genuine
+# media segment rather than an error page or truncated bytes. This does not
+# prove content-transcoder ran (it doesn't, on this path); see
+# 31-transcode.sh for that.
 probe="$(docker run --rm -i -v "$seg:/seg.ts:ro" --entrypoint ffprobe \
   jrottenberg/ffmpeg:8-alpine \
   -v error -select_streams v:0 \
