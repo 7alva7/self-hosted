@@ -1,6 +1,9 @@
 #!/command/with-contenv sh
 set -a
 source /etc/webtor/common.env
+source /etc/webtor/secrets/api.env
+EXPORT_API_KEY=$API_KEY
+EXPORT_API_SECRET=$API_SECRET
 EXPORT_USE_SUBDOMAINS=false
 EXPORT_PATH_PREFIX=/torrent-http-proxy/
 EXPORT_DOMAIN=$DOMAIN
