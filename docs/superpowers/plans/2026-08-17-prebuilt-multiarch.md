@@ -999,7 +999,7 @@ Expected: у всех двенадцати в списке есть `architectur
 for svc in torrent-store magnet2torrent external-proxy torrent-web-seeder torrent-web-seeder-cleaner \
            content-transcoder torrent-archiver srt2vtt torrent-http-proxy rest-api web-ui nginx-vod; do
   br=$(gh api "repos/webtor-io/$svc" --jq .default_branch)
-  d=$(docker buildx imagetools inspect "ghcr.io/webtor-io/$svc:$br" --format '{{.Manifest.Digest}}')
+  d=$(docker buildx imagetools inspect "ghcr.io/webtor-io/$svc:$br" | awk '/^Digest:/{print $2; exit}')
   echo "ghcr.io/webtor-io/$svc:$br@$d"
 done
 ```
