@@ -1,0 +1,21 @@
+services:
+  webseed:
+    image: nginx:alpine
+    volumes:
+      - ./fixtures/content:/usr/share/nginx/html:ro
+
+  webtor:
+    image: ${WEBTOR_IMAGE:-ghcr.io/webtor-io/self-hosted:latest}
+    depends_on:
+      - webseed
+    environment:
+      DOMAIN: http://localhost:8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - data:/data
+      - pgdata:/pgdata
+
+volumes:
+  data:
+  pgdata:
