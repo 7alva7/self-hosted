@@ -1,0 +1,37 @@
+name: Smoke tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Native runner per arch: no QEMU, so the smoke suite exercises real
+      # arm64 binaries at real speed.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: webtor-self-hosted:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run smoke suite
+        run: tests/run.sh webtor-self-hosted:ci
