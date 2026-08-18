@@ -162,8 +162,32 @@ grep -q 'edge=content-transcoder' <<<"$logs" \
 # the id this scenario created, the second pins an actual encode completing.
 grep -q "sessionManager: created session.*sessionID=$session_id" <<<"$logs" \
   || fail "content-transcoder log never reports creating session $session_id: $(grep -i content-transcoder <<<"$logs" | tail -40)"
-grep -q 'run: ffmpeg finished normally' <<<"$logs" \
-  || fail "content-transcoder log never reports a completed ffmpeg run: $(grep -i content-transcoder <<<"$logs" | tail -40)"
+
+# The completed-encode line is asynchronous, so it needs a bounded retry rather
+# than a one-shot grep on the snapshot above. content-transcoder logs it from a
+# goroutine after `cmd.Wait()` returns (services/transcode_run.go:162-172):
+#
+#     waitErr := r.cmd.Wait()
+#     if waitErr != nil { ...Debug("run: ffmpeg exited with error") }
+#     else             { ...Info("run: ffmpeg finished normally") }
+#
+# Fetching segment 0 only proves ffmpeg has produced its *first* segment; the
+# process may still be encoding the rest, so a bare grep here races the encoder
+# and goes red for no reason. That matters more than usual: this suite is about
+# to gate automated Renovate bump PRs, where an intermittent red erodes trust in
+# the gate far faster than it catches anything.
+transcode_run_completed() {
+  local l
+  l="$("${compose[@]}" logs webtor 2>&1)"
+  if grep -q 'run: ffmpeg finished normally' <<<"$l"; then
+    return 0
+  fi
+  # Printed only on the final attempt (wait_for discards output until it gives
+  # up), so the timeout message carries the transcoder's own last words.
+  grep -i content-transcoder <<<"$l" | tail -20 || true
+  return 1
+}
+wait_for 120 "content-transcoder to report a completed ffmpeg run" transcode_run_completed
 
 # A size check alone would pass for an HTML error page of similar size. Probe
 # the segment with ffprobe to confirm it is real, decodable H.264 video with

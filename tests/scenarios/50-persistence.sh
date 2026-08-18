@@ -91,7 +91,18 @@ got="$(shasum -a 256 "$out" | cut -d' ' -f1)"
 assert_eq "$got" "$want" "post-restart video.mp4 checksum"
 
 # A second boot must not re-run migrations destructively or crash-loop.
+#
+# NB: this is an `if`, not `printf ... | grep -q ... && fail`. That construct
+# was a false-pass generator, which is the worst kind of test bug: when a panic
+# WAS present, `grep -q` matched and exited immediately, `printf` took SIGPIPE
+# on its remaining write, `set -o pipefail` (from lib.sh) turned the pipeline's
+# status into failure, so `&&` skipped `fail` entirely -- and since a failing
+# left operand of `&&` is exempt from `set -e`, the scenario fell through to
+# `echo "PASS: persistence"`. A real panic printed a green scenario. The
+# here-string has no pipe, and `if` makes the failure path unconditional.
 logs="$("${compose[@]}" logs --tail 400 webtor)"
-printf '%s' "$logs" | grep -qiE 'panic:|migration failed' && fail "restart logs contain fatal errors: $(printf '%s' "$logs" | tail -60)"
+if grep -qiE 'panic:|migration failed' <<<"$logs"; then
+  fail "restart logs contain fatal errors: $(tail -60 <<<"$logs")"
+fi
 
 echo "PASS: persistence"
