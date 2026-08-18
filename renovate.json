@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Webtor components: keep the tag, bump the digest, one PR each",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/webtor-io/**"],
+      "pinDigests": true,
+      "groupName": null,
+      "schedule": ["at any time"]
+    },
+    {
+      "description": "Base images move rarely; group them to keep PR noise down",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine"],
+      "groupName": "base images"
+    }
+  ]
+}
