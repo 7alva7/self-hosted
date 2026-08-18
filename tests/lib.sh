@@ -2,8 +2,11 @@
 set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 FIXTURE_DIR="$TESTS_DIR/fixtures"
 BASE_URL="${BASE_URL:-http://localhost:8080}"
+# Must match the -p passed by run.sh.
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-webtor-smoke}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -51,4 +54,12 @@ api() {
   local method="$1" path="$2"
   shift 2
   curl --fail-with-body -sS -X "$method" "$BASE_URL$path" "$@"
+}
+
+# webtor_exec <cmd...>
+# Runs a command inside the running webtor container (the "webtor" service
+# in docker-compose.yml) via docker compose exec.
+webtor_exec() {
+  docker compose -f "$TESTS_DIR/docker-compose.yml" -p "$COMPOSE_PROJECT" \
+    exec -T webtor "$@"
 }

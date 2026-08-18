@@ -12,9 +12,21 @@ jobs:
         include:
           - runner: ubuntu-latest
             arch: amd64
+            allow-failure: false
           - runner: ubuntu-24.04-arm
             arch: arm64
+            # Component images (ghcr.io/webtor-io/*) are amd64-only today;
+            # converting their CI to publish linux/arm64 is separate work the
+            # owner hasn't done yet. Until every `FROM ghcr.io/webtor-io/*`
+            # in the Dockerfile resolves on arm64, this leg can only fail at
+            # the image pull -- so it's advisory, not a hard gate. Flip this
+            # to `false` once those images are published for linux/arm64;
+            # until then a permanently red required check trains reviewers
+            # to ignore it, including on the Renovate PRs this suite exists
+            # to gate.
+            allow-failure: true
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.allow-failure }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

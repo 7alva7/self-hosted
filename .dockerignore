@@ -6,3 +6,10 @@
 README.md
 LICENSE
 .DS_Store
+
+# Generated smoke-test fixtures (rebuilt by tests/fixtures/build.sh on every
+# local run) -- an mp4 and a .torrent that have no business in the build
+# context. Mirrors the exclusions in .gitignore.
+tests/fixtures/content/
+tests/fixtures/*.torrent
+tests/fixtures/summary.json

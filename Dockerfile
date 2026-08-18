@@ -3,7 +3,10 @@ ARG S6_OVERLAY_VER="3.2.0.2"
 ARG S6_VERBOSITY=1
 
 # Component images are pinned by tag AND digest so Renovate can bump them
-# and builds stay reproducible. Nothing is compiled here any more.
+# one at a time and each component's provenance is fully reproducible.
+# Nothing is compiled here any more. The Alpine base below and its apk
+# packages are NOT pinned to a digest and will float to whatever `apk add`
+# resolves at build time.
 FROM ghcr.io/webtor-io/torrent-store:master@sha256:d1fca505c913e20536726e7a079dcb2350abdabf86fd20b8200cbc022cd2d260 AS torrent-store
 FROM ghcr.io/webtor-io/magnet2torrent:master@sha256:2b3ea8452ccc080015637efd2878e2666712e013a38d5cada1ec33f392c381b3 AS magnet2torrent
 FROM ghcr.io/webtor-io/external-proxy:master@sha256:04a3307b026601a3d0e32a28ca6bc2823752fb0866f518120bc4e5b7526aebed AS external-proxy
