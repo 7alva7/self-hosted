@@ -11,8 +11,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Команды
 
 ```bash
-# Сборка (быстрая: копирует готовые артефакты из образов компонентов, ~49s холодная)
-docker build --platform linux/amd64 -t webtor-self-hosted:assembly .
+# Сборка (быстрая: копирует готовые артефакты из образов компонентов; замеры на amd64:
+# ~49s холодная, ~31s тёплая — против 40+ минут у старого компилирующего Dockerfile)
+docker build -t webtor-self-hosted:assembly .
+# Под конкретную архитектуру: docker build --platform linux/arm64 -t webtor-self-hosted:arm64 .
 
 # Запуск и проверка
 docker run -d -p 8080:8080 -v data:/data -v pgdata:/pgdata --name webtor webtor-self-hosted:assembly
@@ -26,7 +28,9 @@ tests/run.sh webtor-self-hosted:assembly
 
 `tests/run.sh [image]` без аргумента по умолчанию тянет `ghcr.io/webtor-io/self-hosted:latest`. На момент написания этот тег ещё не содержит фикс подписи export-ссылок rest-api (`fix: sign rest-api export urls so torrent-http-proxy accepts them`), поэтому голый прогон падает на сценариях, завязанных на export (архив, HLS, субтитры). До выхода релиза с этим фиксом гонять сьют нужно на локально собранном образе — соберите его командой выше и передайте `tests/run.sh` явным аргументом.
 
-**Релиз:** пуш тега `v*` запускает GitHub Actions (`.github/workflows/docker-image.yml`), который делегирует сборку и публикацию multi-arch-манифеста (amd64+arm64) переиспользуемому workflow `webtor-io/.github/.github/workflows/docker-multiarch.yml` (на момент написания этот workflow ещё не создан в `webtor-io/.github` — до его появления релизный пуш тега не сработает). PR-гейт (`.github/workflows/test.yml`) отдельно собирает образ и гоняет `tests/run.sh` нативно на amd64- и arm64-раннерах — но arm64-нога сейчас помечена `continue-on-error` и не гейтит мердж: компонентные образы (`ghcr.io/webtor-io/*`) пока только amd64, так что сборка на arm64-раннере падает на пуле базовых образов. Станет hard gate, когда компонентные образы появятся под linux/arm64.
+**Релиз:** пуш тега `v*` запускает GitHub Actions (`.github/workflows/docker-image.yml`), который делегирует сборку и публикацию multi-arch-манифеста (amd64+arm64) переиспользуемому workflow `webtor-io/.github/.github/workflows/docker-multiarch.yml`. Все 12 компонентных репозиториев используют тот же workflow и публикуют свои образы под обе архитектуры. PR-гейт (`.github/workflows/test.yml`) собирает образ и гоняет `tests/run.sh` нативно на amd64- и arm64-раннерах; обе ноги обязательны.
+
+Порт хоста для тестов задаётся `WEBTOR_HOST_PORT` (по умолчанию 8080) — пригодится, когда 8080 занят локальным дев-сервером: `WEBTOR_HOST_PORT=18080 tests/run.sh <image>`.
 
 ## Как обновить версию сервиса
 

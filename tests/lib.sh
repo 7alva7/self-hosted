@@ -4,7 +4,7 @@ set -euo pipefail
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 FIXTURE_DIR="$TESTS_DIR/fixtures"
-BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL:-http://localhost:${WEBTOR_HOST_PORT:-8080}}"
 # Must match the -p passed by run.sh.
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-webtor-smoke}"
 

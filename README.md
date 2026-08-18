@@ -26,6 +26,13 @@ This is the self-hosted version of [webtor.io](https://webtor.io), implemented a
 
 You can run your Webtor instance on [ElfHosted](https://store.elfhosted.com/product/webtor/elf/10433/)!
 
+## Supported Platforms
+
+The image is published for `linux/amd64` and `linux/arm64`, so it runs on x86
+servers as well as Apple Silicon, 64-bit ARM boards and ARM NAS devices. Docker
+picks the right variant automatically — the command above is the same on every
+platform. 32-bit ARM (`armv7`) is not supported.
+
 ## Setting a Custom Domain
 
 If you plan to access your instance from a different host or domain, set the `DOMAIN` environment variable like this:
