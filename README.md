@@ -33,6 +33,24 @@ servers as well as Apple Silicon, 64-bit ARM boards and ARM NAS devices. Docker
 picks the right variant automatically — the command above is the same on every
 platform. 32-bit ARM (`armv7`) is not supported.
 
+## Administrator Password
+
+By default the instance is open: anyone who can reach it has full access. Set a
+password from the profile page, or start the container with one:
+
+```bash
+docker run -e ADMIN_PASSWORD=your-password -d -p 8080:8080 -v data:/data -v pgdata:/pgdata \
+  --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+```
+
+`ADMIN_PASSWORD` overrides whatever password was set from the profile, which
+also makes it the way back in if you forget it. To change the password without
+putting it on the command line:
+
+```bash
+docker exec webtor /app/web-ui admin set-password <new-password>
+```
+
 ## Setting a Custom Domain
 
 If you plan to access your instance from a different host or domain, set the `DOMAIN` environment variable like this:
