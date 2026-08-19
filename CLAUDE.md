@@ -79,6 +79,8 @@ Nginx — единственная входная точка (8080): `/` → web
 
 `generate-api-key-and-secret` (oneshot, скрипт в `s6-overlay/scripts/`) генерирует или принимает `API_KEY`/`API_SECRET` и пишет в `/etc/webtor/secrets/api.env`; web-ui зависит от него через `dependencies.d/`.
 
+`generate-session-secret` (тот же паттерн) генерирует или принимает `SESSION_SECRET` и пишет в `/etc/webtor/secrets/session.env`; web-ui run-скрипт сорсит его после `api.env`. web-ui в коде дефолтит `SESSION_SECRET` на публичную константу (`secret123`, см. `services/common/common.go`) — этот oneshot гарантирует, что self-hosted её никогда не использует, и что значение переживает рестарт контейнера (иначе рестарт разлогинивал бы администратора).
+
 ### PostgreSQL
 
 Embedded-инстанс (`s6-rc.d/postgres/run`): initdb при первом старте в `/pgdata`, фоновый инициализатор создаёт роль/базу `app`. `USE_LOCALPG=false` отключает его полностью (сервисы идут на внешний `PG_HOST`). Миграции схемы применяет web-ui из своих `migrations/`.

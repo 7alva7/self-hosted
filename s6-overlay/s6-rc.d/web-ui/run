@@ -2,6 +2,7 @@
 set -a
 source /etc/webtor/common.env
 source /etc/webtor/secrets/api.env
+source /etc/webtor/secrets/session.env
 WEBTOR_API_KEY=$API_KEY
 WEBTOR_API_SECRET=$API_SECRET
 TORRENT_HTTP_PROXY_SERVICE_PORT=$WEB_PORT
