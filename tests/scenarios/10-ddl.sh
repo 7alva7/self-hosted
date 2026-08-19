@@ -30,7 +30,7 @@ print($expr)
   printf '%s' "$val"
 }
 
-resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
+resource="$(apiv1 POST /resource --data-binary "@$FIXTURE_DIR/smoke.torrent")"
 id="$(jget "$resource" 'd["id"]' 'resource id')"
 
 expected_ih="$(jget "$(cat "$FIXTURE_DIR/summary.json")" 'd["infohash"]' 'fixture infohash')"
@@ -39,7 +39,7 @@ assert_eq "$id" "$expected_ih" "resource id must equal fixture infohash"
 # `path=/` currently returns a flattened recursive listing, but `walk` also
 # handles children nested under their directory entry, so this assertion pins
 # the contract that matters -- every fixture file is reachable -- either way.
-listing="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing="$(apiv1 GET "/resource/$id/list?path=/")"
 names="$(jget "$listing" \
   '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
   'listed file names')"
@@ -52,7 +52,7 @@ content_id="$(jget "$listing" \
   '[i["id"] for i in walk(d) if i.get("name") == "video.mp4"][0]' \
   'video.mp4 content id')"
 
-export_json="$(api GET "/rest-api/resource/$id/export/$content_id")"
+export_json="$(apiv1 GET "/resource/$id/export/$content_id")"
 url="$(jget "$export_json" 'd["exports"]["download"]["url"]' 'download url')"
 
 out="$(mktemp)"

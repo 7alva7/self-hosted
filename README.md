@@ -55,6 +55,32 @@ so a bare invocation connects to Postgres with the wrong defaults
 docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui admin set-password <new-password>'
 ```
 
+Once a password is set, the web interface requires authentication for every
+page (`ONLY_AUTHORIZED=true`, the default) — a visitor without a valid session
+is redirected to `/login` instead of getting read access. Set
+`ONLY_AUTHORIZED=false` to turn that off and fall back to the old behavior:
+pages stay reachable without logging in, and only actions that were already
+password-gated (e.g. changing settings) still prompt for one.
+
+## API Access
+
+The REST API (`rest-api`) is not exposed publicly — nginx no longer proxies
+`/rest-api/`. It still runs inside the container, but only web-ui's own
+`/api/v1` can reach it, and `/api/v1` requires an API key.
+
+To get a key: open the profile page in a browser (this requires being logged
+in if `ADMIN_PASSWORD`/`ONLY_AUTHORIZED` are in effect) and generate an API
+credential there. Then call `/api/v1` with it:
+
+```bash
+curl -H "Authorization: Bearer <your-api-key>" http://localhost:8080/api/v1/resource/<id>
+```
+
+`/api/v1` mirrors the old `/rest-api/` paths one for one (e.g.
+`POST /resource`, `GET /resource/<id>`, `GET /resource/<id>/list`,
+`GET /resource/<id>/export/<content_id>`) and returns the same response
+shapes; only the host path prefix and the authentication requirement changed.
+
 ## Setting a Custom Domain
 
 If you plan to access your instance from a different host or domain, set the `DOMAIN` environment variable like this:

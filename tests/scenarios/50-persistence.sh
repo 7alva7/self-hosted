@@ -47,10 +47,10 @@ print($expr)
 
 compose=(docker compose -f "$TESTS_DIR/docker-compose.yml" -p webtor-smoke)
 
-resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
+resource="$(apiv1 POST /resource --data-binary "@$FIXTURE_DIR/smoke.torrent")"
 id="$(jget "$resource" 'd["id"]' 'resource id')"
 
-listing_before="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing_before="$(apiv1 GET "/resource/$id/list?path=/")"
 names_before="$(jget "$listing_before" \
   '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
   'pre-restart file names')"
@@ -62,12 +62,17 @@ done
 "${compose[@]}" restart webtor
 
 wait_for 240 "front page after restart" curl -fsS "$BASE_URL/"
-wait_for 120 "resource after restart" curl -fsS "$BASE_URL/rest-api/resource/$id"
+# The API-key session/cookie jar established in api_key() lives only for
+# this script's process, and the container restart below does not affect
+# it (the key itself is account-scoped, persisted in the embedded
+# Postgres, not tied to the pre-restart session) -- so `apiv1` keeps
+# working unchanged after the restart.
+wait_for 120 "resource after restart" apiv1 GET "/resource/$id"
 
 # Getting a 200 back proves almost nothing by itself -- an empty, freshly
 # re-initialized resource could 200 too. Re-read the listing and require the
 # same fixture files to still be there.
-listing_after="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing_after="$(apiv1 GET "/resource/$id/list?path=/")"
 names_after="$(jget "$listing_after" \
   '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
   'post-restart file names')"
@@ -79,7 +84,7 @@ assert_eq "$names_after" "$names_before" "file listing changed across restart"
 content_id="$(jget "$listing_after" \
   '[i["id"] for i in walk(d) if i.get("name") == "video.mp4"][0]' \
   'video.mp4 content id')"
-export_json="$(api GET "/rest-api/resource/$id/export/$content_id")"
+export_json="$(apiv1 GET "/resource/$id/export/$content_id")"
 url="$(jget "$export_json" 'd["exports"]["download"]["url"]' 'download url')"
 
 out="$(mktemp)"

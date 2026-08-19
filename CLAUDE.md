@@ -73,7 +73,9 @@ s6-overlay качается двумя тарболами: noarch (общий д
 
 ### Маршрутизация (etc/nginx/conf/nginx.template.conf)
 
-Nginx — единственная входная точка (8080): `/` → web-ui, `/rest-api/` → rest-api, `/torrent-http-proxy/` → torrent-http-proxy. Второй server-блок на 8098 — nginx-vod (`vod_mode remote`, upstream — torrent-http-proxy) для HLS/DASH-упаковки. Шаблон рендерится envsubst'ом в run-скрипте nginx-vod с **явным списком переменных** — новую переменную в шаблоне нужно добавить и в этот список, иначе она заменится пустотой.
+Nginx — единственная входная точка (8080): `/` → web-ui, `/torrent-http-proxy/` → torrent-http-proxy. Второй server-блок на 8098 — nginx-vod (`vod_mode remote`, upstream — torrent-http-proxy) для HLS/DASH-упаковки. Шаблон рендерится envsubst'ом в run-скрипте nginx-vod с **явным списком переменных** — новую переменную в шаблоне нужно добавить и в этот список, иначе она заменится пустотой.
+
+**`/rest-api/` намеренно не проксируется наружу** — у rest-api нет собственной авторизации, и публичный доступ к нему позволял бы сохранить торрент и получить подписанные ссылки на контент в обход web-ui. Сервис `rest-api` продолжает работать внутри контейнера (на `REST_API_SERVICE_HOST/PORT`, см. `common.template.env`) — к нему обращается только web-ui через свой `/api/v1`, который требует API-ключ (`Authorization: Bearer <key>`, выпускается на странице профиля). Пути `/api/v1` зеркалят старые `/rest-api/` один в один (`POST /resource`, `GET /resource/<id>`, `.../list`, `.../export/<id>`) и отдают тот же JSON — сменился только префикс и требование авторизации. Смоук-сьют (`tests/lib.sh`, хелперы `api_key`/`apiv1`) переведён на этот путь; `00-boot.sh` держит регресс-проверку, что `/rest-api/` не отвечает 2xx снаружи.
 
 ### Oneshot-секреты
 
@@ -87,6 +89,8 @@ Embedded-инстанс (`s6-rc.d/postgres/run`): initdb при первом с�
 
 ## Env-переменные пользователя
 
-Все пользовательские настройки (DOMAIN, CLEANER_*, PG_*, DISABLE_*, OMDB_API_KEY, ADMIN_PASSWORD и др.) задокументированы в README.md — при добавлении новой обновлять его.
+Все пользовательские настройки (DOMAIN, CLEANER_*, PG_*, DISABLE_*, OMDB_API_KEY, ADMIN_PASSWORD, ONLY_AUTHORIZED и др.) задокументированы в README.md — при добавлении новой обновлять его.
 
 `ADMIN_PASSWORD` (пусто по умолчанию) — пароль администратора. Без него инстанс полностью открыт: любой, кто может достучаться до контейнера, имеет полный доступ без авторизации. Переменная имеет приоритет над паролем, сохранённым через профиль (см. также восстановление доступа: `docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui admin set-password <new-password>'` — команда должна сама сорсить `/etc/webtor/common.env`, иначе `web-ui` подключится к Postgres с дефолтами common-services (`PG_USER=webhook`/`PG_DATABASE=webhook`) вместо `app`/`app`; подробности в README).
+
+`ONLY_AUTHORIZED` (по умолчанию `true`) — фича web-ui, закрывает весь веб-интерфейс авторизацией: без валидной сессии запрос на любую страницу редиректит на `/login`, а не отдаёт контент на чтение. self-hosted включает её по умолчанию, в отличие от исторически открытого поведения — `ONLY_AUTHORIZED=false` возвращает старое поведение (страницы доступны без логина, паролем защищены только уже защищённые ранее действия).

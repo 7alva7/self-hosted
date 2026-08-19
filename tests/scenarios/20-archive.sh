@@ -27,15 +27,15 @@ print($expr)
   printf '%s' "$val"
 }
 
-resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
+resource="$(apiv1 POST /resource --data-binary "@$FIXTURE_DIR/smoke.torrent")"
 id="$(jget "$resource" 'd["id"]' 'resource id')"
 
-listing="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing="$(apiv1 GET "/resource/$id/list?path=/")"
 dir_id="$(jget "$listing" \
   '[i["id"] for i in walk(d) if i.get("name") == "subs" and i.get("type") == "directory"][0]' \
   'subs directory id')"
 
-export_json="$(api GET "/rest-api/resource/$id/export/$dir_id")"
+export_json="$(apiv1 GET "/resource/$id/export/$dir_id")"
 url="$(jget "$export_json" 'd["exports"]["download"]["url"]' 'archive download url')"
 case "$url" in
   *arch*) : ;;
