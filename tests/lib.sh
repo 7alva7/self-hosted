@@ -85,10 +85,22 @@ api() {
 # those subshells (bash documents it as "the process ID of the invoking
 # shell, not the subshell"), so a $$-scoped file survives them and still
 # gives each scenario script -- a fresh `bash scenario.sh` process -- its own
-# cache. It is not cleaned up: it's a few bytes per scenario run, and scoping
-# cleanup here would fight the EXIT trap every scenario already sets for its
-# own temp files (last trap wins, so ours would just get silently dropped).
+# cache.
+#
+# Removed at source time, not just left to leak: `run.sh` does `compose
+# down -v` between runs, which wipes the embedded Postgres the key is stored
+# in. PIDs get reused across separate runs (there is no cross-run identity
+# tying a given $$ to a given container instance), so a stale file surviving
+# from an earlier run under the same PID would hand a scenario a key for an
+# account that no longer exists -- surfacing as 401s that look like an auth
+# regression rather than what they are (a leftover temp file). Clearing it
+# on every source guarantees each scenario script starts from a clean slate.
+# The file itself is still not cleaned up *after* a successful run (a few
+# bytes; scoping an EXIT trap here would fight the EXIT trap every scenario
+# already sets for its own temp files, since only the last trap wins) --
+# only the staleness/collision risk is what this addresses.
 _API_KEY_CACHE_FILE="${TMPDIR:-/tmp}/webtor-smoke-api-key.$$"
+rm -f "$_API_KEY_CACHE_FILE"
 api_key() {
   if [ -s "$_API_KEY_CACHE_FILE" ]; then
     cat "$_API_KEY_CACHE_FILE"
@@ -98,6 +110,14 @@ api_key() {
   local jar body csrf_token resp code key_json key
 
   jar="$(mktemp)"
+  # This function only ever runs inside the subshell a caller's command
+  # substitution forks (every call site is `key="$(api_key)"` or the
+  # nested `$(api_key)` inside apiv1's own -H argument), so an EXIT trap
+  # set here is scoped to that subshell alone -- it fires when this
+  # function's `fail` calls `exit`, when it returns normally, on every
+  # path, and it cannot clobber a scenario's own EXIT trap, which belongs
+  # to a different (the parent) shell process entirely.
+  trap 'rm -f "$jar"' EXIT
   body="$(curl --fail-with-body -sS -c "$jar" "$BASE_URL/profile")"
   csrf_token="$(printf '%s' "$body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
   [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
@@ -122,7 +142,6 @@ api_key() {
     || fail "could not parse API key from /api-credentials/key response: $key ($key_json)"
   [ -n "$key" ] || fail "API key response parsed but was empty: $key_json"
 
-  rm -f "$jar"
   printf '%s' "$key" > "$_API_KEY_CACHE_FILE"
   cat "$_API_KEY_CACHE_FILE"
 }
@@ -133,11 +152,24 @@ api_key() {
 # rest-api directly. A middleware in front of /api/v1 copies the
 # Authorization header's key into the query parameter the handler
 # cross-checks, so the caller only needs to supply the header.
+#
+# api_key's own `fail` calls only exit *its* subshell -- inlining
+# `$(api_key)` straight into curl's -H argument would silently discard
+# that exit status (a failed command substitution used as part of a larger
+# argument does not itself trip `set -e`), so curl would still run with an
+# empty bearer token, hit the network, get a 401, and report a generic
+# curl error instead of api_key's actual diagnostic (a missing CSRF token,
+# an unexpected /api-credentials/key status, an unparseable key, ...).
+# Capturing into a local first and checking its own exit status here makes
+# sure that diagnostic is what the scenario actually fails on, and skips
+# the pointless network round-trip.
 apiv1() {
   local method="$1" path="$2"
   shift 2
+  local key
+  key="$(api_key)" || fail "apiv1: could not obtain an API key for $method $path"
   curl --fail-with-body -sS -X "$method" \
-    -H "Authorization: Bearer $(api_key)" \
+    -H "Authorization: Bearer $key" \
     "$BASE_URL/api/v1$path" "$@"
 }
 

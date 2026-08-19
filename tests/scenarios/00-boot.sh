@@ -26,7 +26,17 @@ wait_for 60 "api/v1 rejecting an unauthenticated request (401)" api_v1_unauthori
 # that reintroduces the location block (e.g. a careless merge) would pass
 # every other scenario silently -- they all moved to /api/v1 and none of
 # them still probe /rest-api/.
-rest_api_code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/rest-api/resource/")"
+#
+# Probes /rest-api/swagger/index.html, not /rest-api/resource/: rest-api's
+# router only registers POST /, GET /:resource_id, GET /:resource_id/list
+# and GET /:resource_id/export/:content_id under the resource group
+# (rest-api services/web.go:370-376) -- there is no GET /resource/, so that
+# URL 404s whether or not nginx proxies it, and a probe against it can never
+# actually catch the location block coming back. /swagger/index.html *is* a
+# real registered route (services/web.go:380) that this same probe used to
+# hit for readiness before the API was closed, so it is proven to answer
+# with 200 whenever the proxy exists.
+rest_api_code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/rest-api/swagger/index.html")"
 case "$rest_api_code" in
   2??) fail "/rest-api/ is still publicly reachable (got $rest_api_code) -- the REST API must not be exposed outside the container" ;;
   *) : ;;
