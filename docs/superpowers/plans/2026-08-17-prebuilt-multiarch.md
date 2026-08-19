@@ -19,6 +19,11 @@
 - Имена бинарей в `/app` менять нельзя — s6 run-скрипты вызывают `/app/<service-name>` (напр. `/app/torrent-http-proxy`, `cd /app && ./web-ui serve`).
 - Тесты не ходят в интернет за контентом: фикстура генерируется локально, раздаётся своим nginx-webseed'ом, торрент трекерless.
 - Никаких изменений в бизнес-логике компонентов. Работа затрагивает только CI компонентов и сборку/тесты self-hosted.
+- **Образ для прогона сценариев (Tasks 5-7): `webtor-self-hosted:baseline`, а не дефолтный `:latest`.** Смоук Task 4
+  вскрыл баг: `rest-api` отдавал неподписанные экспортные URL, и torrent-http-proxy отбивал их 403. Правка
+  (`s6-overlay/s6-rc.d/rest-api/run` + `dependencies.d/generate-api-key-and-secret`) уже в ветке, но
+  опубликованный `:latest` её не содержит, поэтому bare `tests/run.sh` падает по таймауту 180s. Команда
+  пересборки локального тега — в отчёте Task 4. После Task 10 дефолтом станет локальная сборка репозитория.
 
 ## File Structure
 
@@ -999,7 +1004,7 @@ Expected: у всех двенадцати в списке есть `architectur
 for svc in torrent-store magnet2torrent external-proxy torrent-web-seeder torrent-web-seeder-cleaner \
            content-transcoder torrent-archiver srt2vtt torrent-http-proxy rest-api web-ui nginx-vod; do
   br=$(gh api "repos/webtor-io/$svc" --jq .default_branch)
-  d=$(docker buildx imagetools inspect "ghcr.io/webtor-io/$svc:$br" --format '{{.Manifest.Digest}}')
+  d=$(docker buildx imagetools inspect "ghcr.io/webtor-io/$svc:$br" | awk '/^Digest:/{print $2; exit}')
   echo "ghcr.io/webtor-io/$svc:$br@$d"
 done
 ```

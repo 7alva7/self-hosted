@@ -26,6 +26,35 @@ This is the self-hosted version of [webtor.io](https://webtor.io), implemented a
 
 You can run your Webtor instance on [ElfHosted](https://store.elfhosted.com/product/webtor/elf/10433/)!
 
+## Supported Platforms
+
+The image is published for `linux/amd64` and `linux/arm64`, so it runs on x86
+servers as well as Apple Silicon, 64-bit ARM boards and ARM NAS devices. Docker
+picks the right variant automatically — the command above is the same on every
+platform. 32-bit ARM (`armv7`) is not supported.
+
+## Administrator Password
+
+By default the instance is open: anyone who can reach it has full access. Set a
+password from the profile page, or start the container with one:
+
+```bash
+docker run -e ADMIN_PASSWORD=your-password -d -p 8080:8080 -v data:/data -v pgdata:/pgdata \
+  --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+```
+
+`ADMIN_PASSWORD` overrides whatever password was set from the profile, which
+also makes it the way back in if you forget it. To change the password without
+putting it on the command line, source the environment the container's own
+services run with first — `web-ui` isn't started under it by `docker exec`,
+so a bare invocation connects to Postgres with the wrong defaults
+(`PG_USER=webhook`, `PG_DATABASE=webhook`, no password) instead of the
+`app`/`app` role the embedded database actually created:
+
+```bash
+docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui admin set-password <new-password>'
+```
+
 ## Setting a Custom Domain
 
 If you plan to access your instance from a different host or domain, set the `DOMAIN` environment variable like this:
@@ -77,14 +106,14 @@ By default Webtor uses an embedded PostgreSQL database. You can configure the da
 
 ## Configuring Transcoding
 
-- **DISABLE_VIDEO_TRANSCODING** - disables video transcoding
+- **DISABLE_VIDEO_TRANSCODING** - disables video transcoding (default: false)
 
 ## Disable UI Features
 
-- **DISABLE_WEBDAV** - disables WebDAV interface
-- **DISABLE_EMBED** - disables embeds support
+- **DISABLE_WEBDAV** - disables WebDAV interface (default: false)
+- **DISABLE_EMBED** - disables embeds support (default: false)
 
 ## Other Custom Variables
 
-- **WAIT_FOR_VPN** - waits for VPN to start (in case you are using Gluetun)
+- **WAIT_FOR_VPN** - waits for VPN to start (in case you are using Gluetun) (default: false)
 - **REQUEST_URL_MAPPINGS** - custom mappings for request urls
