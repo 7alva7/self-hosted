@@ -45,10 +45,14 @@ docker run -e ADMIN_PASSWORD=your-password -d -p 8080:8080 -v data:/data -v pgda
 
 `ADMIN_PASSWORD` overrides whatever password was set from the profile, which
 also makes it the way back in if you forget it. To change the password without
-putting it on the command line:
+putting it on the command line, source the environment the container's own
+services run with first — `web-ui` isn't started under it by `docker exec`,
+so a bare invocation connects to Postgres with the wrong defaults
+(`PG_USER=webhook`, `PG_DATABASE=webhook`, no password) instead of the
+`app`/`app` role the embedded database actually created:
 
 ```bash
-docker exec webtor /app/web-ui admin set-password <new-password>
+docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui admin set-password <new-password>'
 ```
 
 ## Setting a Custom Domain
