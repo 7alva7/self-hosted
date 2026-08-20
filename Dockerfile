@@ -37,7 +37,7 @@ ENV S6_VERBOSITY=$S6_VERBOSITY
 LABEL org.opencontainers.image.source="https://github.com/webtor-io/self-hosted"
 
 RUN apk --no-cache add redis ffmpeg ca-certificates openssl pcre zlib envsubst uuidgen \
-    postgresql postgresql-client postgresql-contrib curl
+    postgresql postgresql-client postgresql-contrib curl attr
 
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VER}/s6-overlay-noarch.tar.xz /tmp/
 RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && rm /tmp/s6-overlay-noarch.tar.xz

@@ -1,0 +1,39 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[s3]" 1
+}
+
+if [ "${USE_LOCALS3:-true}" = "false" ]; then
+  log "USE_LOCALS3=false -- not starting the built-in S3; set AWS_ENDPOINT to your own"
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+
+mkdir -p "$STORAGE_DIR"
+
+# versitygw's posix backend keeps object metadata -- etag, content type,
+# checksums, multipart state -- in extended attributes, and exits if the
+# filesystem cannot store them. That is the case for a bind mount from macOS
+# or Windows, and for some network filesystems on Linux. Say so plainly here
+# instead of crash-looping with "xattr check failed" every second.
+probe="$STORAGE_DIR/.xattr-probe"
+: > "$probe"
+if ! setfattr -n user.webtor -v probe "$probe" 2>/dev/null; then
+  rm -f "$probe"
+  log "FATAL: $STORAGE_DIR does not support extended attributes, which the S3 store requires."
+  log "Mount it as a named docker volume (-v storage:/storage) rather than a host directory,"
+  log "or set USE_LOCALS3=false and point AWS_ENDPOINT at an external S3."
+  exec sleep infinity
+fi
+rm -f "$probe"
+
+exec /app/versitygw \
+  --port "$S3_SERVICE_HOST:$S3_SERVICE_PORT" \
+  --access "$AWS_ACCESS_KEY_ID" \
+  --secret "$AWS_SECRET_ACCESS_KEY" \
+  posix "$STORAGE_DIR" 2>&1 | s6-log p"[s3]" 1
