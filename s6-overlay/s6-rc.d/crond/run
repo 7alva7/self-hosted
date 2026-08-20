@@ -1,0 +1,19 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+set +a
+
+# One switch for operators running several instances against one database, who
+# do not want every one of them polling subscriptions and reaping caches.
+if [ "${DISABLE_CRON:-false}" = "true" ]; then
+  echo "DISABLE_CRON=true -- scheduled jobs are off" | s6-log p"[crond]" 1
+  # s6 restarts a longrun that exits, so idle instead of exiting.
+  exec sleep infinity
+fi
+
+# busybox crond reads one file per user from this directory. Install ours
+# under root and hand crond the same schedules production runs.
+mkdir -p /etc/crontabs
+cp /etc/webtor/cron/crontab /etc/crontabs/root
+
+exec crond -f -l 8 -L /dev/stdout 2>&1 | s6-log p"[crond]" 1
