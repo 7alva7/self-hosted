@@ -117,7 +117,10 @@ api_key() {
   # function's `fail` calls `exit`, when it returns normally, on every
   # path, and it cannot clobber a scenario's own EXIT trap, which belongs
   # to a different (the parent) shell process entirely.
-  trap 'rm -f "$jar"' EXIT
+  # Expand $jar now, not when the trap fires: by then this function has
+  # returned and the local is gone, which under `set -u` aborts the subshell
+  # with "jar: unbound variable" instead of cleaning anything up.
+  trap "rm -f '$jar'" EXIT
   body="$(curl --fail-with-body -sS -c "$jar" "$BASE_URL/profile")"
   csrf_token="$(printf '%s' "$body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
   [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
@@ -168,8 +171,16 @@ apiv1() {
   shift 2
   local key
   key="$(api_key)" || fail "apiv1: could not obtain an API key for $method $path"
+  # The explicit Content-Type is load-bearing, not decoration. curl defaults a
+  # --data-binary body to application/x-www-form-urlencoded, and the global
+  # CSRF middleware parses a form-encoded body looking for its token -- which
+  # consumes the request body before the handler reads it. POST /resource then
+  # sees nothing and answers 400 "the body must be a .torrent file or a magnet
+  # uri". Declaring a non-form type keeps the bytes intact. Harmless on the
+  # GETs, which carry no body at all.
   curl --fail-with-body -sS -X "$method" \
     -H "Authorization: Bearer $key" \
+    -H "Content-Type: application/x-bittorrent" \
     "$BASE_URL/api/v1$path" "$@"
 }
 
