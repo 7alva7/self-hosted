@@ -57,14 +57,18 @@ docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui 
 
 Once a password is set, the web interface requires authentication for every
 page (`ONLY_AUTHORIZED=true`, the default) — a visitor without a valid session
-is redirected to `/login` instead of getting read access. This includes
-third-party embeds (the SDK/`<iframe>` player): on a password-protected
-instance, an embed also gets redirected to the login form instead of playing,
-since it is just another unauthenticated request to a gated page. Set
+is redirected to `/login` instead of getting read access. Set
 `ONLY_AUTHORIZED=false` to turn that off and fall back to the old behavior:
-pages — and embeds — stay reachable without logging in, and only actions
-that were already password-gated (e.g. changing settings) still prompt for
-one.
+pages stay reachable without logging in, and only actions that were already
+password-gated (e.g. changing settings) still prompt for one.
+
+Embedding is handled separately, because a third-party `<iframe>` has no
+session with your instance — redirecting it to a login form would only render
+a broken player. Which sites may embed is decided by the embed domain list on
+your profile page: add a domain there and the player works on it. A site that
+is not on the list shows a short "not authorized" message inside the player
+instead. Your own domain, `localhost` and `127.0.0.1` always work. To let any
+site embed from your instance, set `EMBED_ONLY_AUTHORIZED=false`.
 
 ## API Access
 
