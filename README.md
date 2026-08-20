@@ -128,6 +128,28 @@ By default Webtor uses an embedded PostgreSQL database. You can configure the da
 - **PG_PASSWORD** - password for postgres (default: app)
 - **PG_DATABASE** - database for postgres (default: app)
 
+## Configuring S3 Storage
+
+By default Webtor runs an embedded S3-compatible store (versitygw over a local
+directory) for the poster cache, user-uploaded subtitles and thumbnails.
+Credentials are generated on first boot and persisted, so they survive
+container restarts. You can configure it using the following environment
+variables:
+
+- **USE_LOCALS3** - use the built-in S3 store (default: true)
+- **STORAGE_DIR** - directory backing the built-in S3 store (default: /storage)
+- **AWS_ENDPOINT** - S3 endpoint (default: http://127.0.0.1:8099, the built-in store)
+- **AWS_REGION** - S3 region (default: us-east-1)
+- **AWS_NO_SSL** - disable TLS for the S3 endpoint (default: true)
+- **AWS_ACCESS_KEY_ID** / **AWS_SECRET_ACCESS_KEY** - S3 credentials (auto-generated for the built-in store; set both to use your own or to point at an external S3)
+- **AWS_POSTER_CACHE_BUCKET** - bucket for the poster cache (default: posters)
+- **AWS_USER_SUBTITLE_BUCKET** - bucket for user-uploaded subtitles (default: subtitles)
+- **AWS_THUMBNAIL_BUCKET** - bucket for thumbnails (default: thumbnails)
+
+To use an external S3 instead of the built-in store, set `USE_LOCALS3=false`,
+`AWS_ENDPOINT` and the credentials; the bucket variables still apply and
+point at buckets on that external store (which you must create yourself).
+
 ## Configuring content enrichment
 
 - **OMDB_API_KEY** - key for OMDB API
