@@ -45,32 +45,41 @@ secret_key="${creds##* }"
 obj_key="smoke-$$-$(date +%s)"
 payload="$(head -c 4096 /dev/urandom | base64)"
 
+# The credentials and the key travel as positional arguments, and the
+# container-side script is single-quoted so the host expands none of it.
+# Interpolating them into the string instead would let one apostrophe in a
+# credential close the quoting and run whatever follows inside the container.
+# Today's generated values are hex and cannot contain one -- but the same
+# generator hands through an operator-supplied AWS_ACCESS_KEY_ID verbatim,
+# which is a documented way to run this image, so the safety of this test
+# would rest on a user's choice of password characters.
+s3_curl() {
+  webtor_exec sh -c '
+    key=$1; secret=$2; obj=$3; shift 3
+    exec curl --fail-with-body -sS \
+      --aws-sigv4 "aws:amz:us-east-1:s3" \
+      --user "$key:$secret" \
+      "$@" \
+      "http://127.0.0.1:8099/thumbnails/$obj"
+  ' _ "$access_key" "$secret_key" "$obj_key" "$@"
+}
+
+# Remove the object however this scenario ends -- including the assertion
+# failure below, which exits before any cleanup that follows it in the body.
+# run.sh does `compose down -v` either way, so this matters for the manual
+# iteration workflow against a container kept alive between runs.
+cleanup_object() {
+  s3_curl -X DELETE </dev/null >/dev/null 2>&1 || true
+}
+trap cleanup_object EXIT
+
 put_object() {
-  printf '%s' "$payload" | webtor_exec sh -c "
-    curl --fail-with-body -sS \
-      --aws-sigv4 'aws:amz:us-east-1:s3' \
-      --user '$access_key:$secret_key' \
-      -X PUT --data-binary @- \
-      'http://127.0.0.1:8099/thumbnails/$obj_key'
-  "
+  printf '%s' "$payload" | s3_curl -X PUT --data-binary @-
 }
 wait_for 30 "PUT object through the S3 endpoint" put_object
 
-got="$(webtor_exec sh -c "
-  curl --fail-with-body -sS \
-    --aws-sigv4 'aws:amz:us-east-1:s3' \
-    --user '$access_key:$secret_key' \
-    'http://127.0.0.1:8099/thumbnails/$obj_key'
-" </dev/null)" || fail "GET object through the S3 endpoint failed"
+got="$(s3_curl </dev/null)" || fail "GET object through the S3 endpoint failed"
 
 assert_eq "$got" "$payload" "object round-tripped through the S3 endpoint is not byte-identical"
-
-webtor_exec sh -c "
-  curl --fail-with-body -sS \
-    --aws-sigv4 'aws:amz:us-east-1:s3' \
-    --user '$access_key:$secret_key' \
-    -X DELETE \
-    'http://127.0.0.1:8099/thumbnails/$obj_key'
-" </dev/null >/dev/null 2>&1 || true
 
 echo "PASS: s3"
