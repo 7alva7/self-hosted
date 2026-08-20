@@ -20,6 +20,13 @@ FROM ghcr.io/webtor-io/rest-api:main@sha256:b626a44bf6706db929b7321f86d9126abc30
 FROM ghcr.io/webtor-io/web-ui:main@sha256:eb264afdd6b91fe632b77f3ec4b13da9b7abdb5a3a7725004e8622df78219aff AS web-ui
 FROM ghcr.io/webtor-io/nginx-vod:main@sha256:4d9aaa6ac3dc2e3e73bdf8afd47d4ffab0a932f22b91a4c8cdd7674290bd89dd AS nginx-vod
 
+# Not a webtor component: the S3 gateway backing /storage. Apache 2.0, one
+# static binary, and its posix backend keeps objects as ordinary files so a
+# self-hoster can read their own data without this program. Pinned like every
+# other stage; Renovate does not watch it (renovate.json matches
+# ghcr.io/webtor-io/**), so bumps here are deliberate and manual.
+FROM ghcr.io/versity/versitygw:latest@sha256:c4cbd9d9cb8dedbb055ac788dbd02635651b9b1cebac95b095b3217231aa87ad AS versitygw
+
 FROM alpine:${ALPINE_VER}
 
 ARG S6_OVERLAY_VER
@@ -58,6 +65,7 @@ COPY --from=torrent-archiver /server ./torrent-archiver
 COPY --from=srt2vtt /server ./srt2vtt
 COPY --from=torrent-http-proxy /server ./torrent-http-proxy
 COPY --from=rest-api /server ./rest-api
+COPY --from=versitygw /usr/local/bin/versitygw ./versitygw
 COPY --from=content-transcoder /app/server ./content-transcoder
 COPY --from=content-transcoder /app/player ./player
 COPY --from=web-ui /app/server ./web-ui
