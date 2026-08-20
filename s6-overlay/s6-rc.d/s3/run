@@ -14,15 +14,31 @@ if [ "${USE_LOCALS3:-true}" = "false" ]; then
   exec sleep infinity
 fi
 
-mkdir -p "$STORAGE_DIR"
+mkdir -p "$STORAGE_DIR" 2>/dev/null
 
 # versitygw's posix backend keeps object metadata -- etag, content type,
 # checksums, multipart state -- in extended attributes, and exits if the
 # filesystem cannot store them. That is the case for a bind mount from macOS
 # or Windows, and for some network filesystems on Linux. Say so plainly here
 # instead of crash-looping with "xattr check failed" every second.
+#
+# Writability is checked on its own, before the xattr probe. Both failures
+# make `setfattr` fail, so folding them together would report "no extended
+# attribute support" for what is really a permissions or read-only-mount
+# problem -- sending the operator to change volume type when they need to
+# fix ownership. The two need different fixes, so they get different messages.
 probe="$STORAGE_DIR/.xattr-probe"
-: > "$probe"
+# touch, not `: > "$probe"`: `:` is a POSIX special builtin, and a redirection
+# error on one is allowed to terminate the shell outright rather than yield a
+# non-zero status the `if` can catch. touch is a regular command with plain
+# exit-status semantics, so the failure is actually testable here.
+if ! touch "$probe" 2>/dev/null; then
+  log "FATAL: $STORAGE_DIR is not writable, so the S3 store cannot run."
+  log "Check the ownership and mount options of the volume mounted there"
+  log "(a read-only mount, or one owned by another uid, produces this),"
+  log "or set USE_LOCALS3=false and point AWS_ENDPOINT at an external S3."
+  exec sleep infinity
+fi
 if ! setfattr -n user.webtor -v probe "$probe" 2>/dev/null; then
   rm -f "$probe"
   log "FATAL: $STORAGE_DIR does not support extended attributes, which the S3 store requires."
