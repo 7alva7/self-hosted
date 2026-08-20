@@ -7,10 +7,43 @@ wait_for 180 "web-ui front page" curl -fsS "$BASE_URL/"
 code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/")"
 assert_eq "$code" "200" "front page status"
 
-# rest-api must be reachable through the nginx /rest-api/ prefix.
-wait_for 60 "rest-api swagger" curl -fsS "$BASE_URL/rest-api/swagger/index.html"
+# rest-api is no longer exposed directly (see nginx.template.conf); the API
+# layer is now reached only through web-ui's authenticated /api/v1. An
+# unauthenticated request there returns 401 rather than erroring, timing
+# out, or falling through to web-ui's own 404 page -- that 401 is itself
+# proof the /api/v1 surface (and, transitively, web-ui's connection to
+# rest-api behind it) is up and enforcing auth, without needing an API key
+# just to prove readiness.
+api_v1_unauthorized() {
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/v1/resource/boot-probe")"
+  [ "$code" = "401" ]
+}
+wait_for 60 "api/v1 rejecting an unauthenticated request (401)" api_v1_unauthorized
 
-# The two checks above only prove web-ui and rest-api are up. Nothing else in
+# Regression guard for the /rest-api/ closure: nginx must not proxy it to
+# anything reachable from outside. Without this assertion, a future edit
+# that reintroduces the location block (e.g. a careless merge) would pass
+# every other scenario silently -- they all moved to /api/v1 and none of
+# them still probe /rest-api/.
+#
+# Probes /rest-api/swagger/index.html, not /rest-api/resource/: rest-api's
+# router only registers POST /, GET /:resource_id, GET /:resource_id/list
+# and GET /:resource_id/export/:content_id under the resource group
+# (rest-api services/web.go:370-376) -- there is no GET /resource/, so that
+# URL 404s whether or not nginx proxies it, and a probe against it can never
+# actually catch the location block coming back. /swagger/index.html *is* a
+# real registered route (services/web.go:380) that this same probe used to
+# hit for readiness before the API was closed, so it is proven to answer
+# with 200 whenever the proxy exists.
+rest_api_code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/rest-api/swagger/index.html")"
+case "$rest_api_code" in
+  2??) fail "/rest-api/ is still publicly reachable (got $rest_api_code) -- the REST API must not be exposed outside the container" ;;
+  *) : ;;
+esac
+
+# The checks above only prove web-ui and the /api/v1 surface are up (and that
+# /rest-api/ stays closed). Nothing else in
 # the suite touches magnet2torrent or external-proxy (no scenario resolves a
 # magnet link or exercises the ~ext leg), so a dependency bump that ships a
 # binary which exits on start (renamed flag, moved path, missing runtime lib)

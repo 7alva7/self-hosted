@@ -65,15 +65,15 @@ resolve_url() {
   esac
 }
 
-resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
+resource="$(apiv1 POST /resource --data-binary "@$FIXTURE_DIR/smoke.torrent")"
 id="$(jget "$resource" 'd["id"]' 'resource id')"
 
-listing="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing="$(apiv1 GET "/resource/$id/list?path=/")"
 content_id="$(jget "$listing" \
   '[i["id"] for i in walk(d) if i.get("name") == "video.mp4"][0]' \
   'video.mp4 content id')"
 
-export_json="$(api GET "/rest-api/resource/$id/export/$content_id")"
+export_json="$(apiv1 GET "/resource/$id/export/$content_id")"
 url="$(jget "$export_json" 'd["exports"]["stream"]["url"]' 'stream url')"
 case "$url" in
   *index.m3u8*) : ;;

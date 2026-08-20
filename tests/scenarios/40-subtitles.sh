@@ -27,10 +27,10 @@ print($expr)
   printf '%s' "$val"
 }
 
-resource="$(api POST /rest-api/resource/ --data-binary "@$FIXTURE_DIR/smoke.torrent")"
+resource="$(apiv1 POST /resource --data-binary "@$FIXTURE_DIR/smoke.torrent")"
 id="$(jget "$resource" 'd["id"]' 'resource id')"
 
-listing="$(api GET "/rest-api/resource/$id/list?path=/")"
+listing="$(apiv1 GET "/resource/$id/list?path=/")"
 srt_id="$(jget "$listing" \
   '[i["id"] for i in walk(d) if i.get("name") == "subtitle.srt"][0]' \
   'subtitle.srt content id')"
@@ -42,7 +42,7 @@ srt_id="$(jget "$listing" \
 # The video item's export has no `tracks[]` either -- its `stream.html_tag`
 # only carries the HLS `sources[]` entry. So this scenario reads the .srt
 # item's own stream export, not the video item's.
-export_json="$(api GET "/rest-api/resource/$id/export/$srt_id")"
+export_json="$(apiv1 GET "/resource/$id/export/$srt_id")"
 url="$(jget "$export_json" 'd["exports"]["stream"]["url"]' 'subtitle stream (vtt) url')"
 case "$url" in
   *'~vtt/'*) : ;;
