@@ -1,0 +1,58 @@
+#!/bin/sh
+
+# Wrapper for every scheduled web-ui command.
+#
+# Deliberately a plain /bin/sh script rather than #!/command/with-contenv sh:
+# with-contenv is an execline program that needs s6's own PATH, which a job
+# spawned by crond -- or anyone debugging with `docker exec` -- does not
+# reliably have. It is not needed here anyway, because sourcing the service
+# environment is precisely what this wrapper does.
+#
+# That sourcing is the first reason it exists: /etc/webtor/common.env is only
+# read by the s6 run scripts and never exported into the container
+# environment, so a job started by crond would otherwise reach Postgres with
+# common-services' defaults (PG_USER=webhook, PG_DATABASE=webhook) instead of
+# app/app and fail to connect.
+#
+# The second is that some jobs are pointless without optional configuration,
+# and a job that errors every morning teaches its operator to ignore the log.
+#
+# Usage: run-cron-job <name> <web-ui subcommand...>
+
+set -a
+. /etc/webtor/common.env
+[ -f /etc/webtor/secrets/api.env ] && . /etc/webtor/secrets/api.env
+set +a
+
+name="$1"
+shift
+
+log() {
+  echo "[cron:${name}] $1"
+}
+
+# Sending mail without a relay is not a failure worth reporting daily -- it is
+# a feature the operator has not configured. Say so once and stop.
+if [ "$name" = "notification-send" ] && [ -z "${SMTP_HOST:-}" ]; then
+  log "SMTP_HOST is empty -- skipping; set SMTP_HOST/SMTP_USER/SMTP_PASS/SMTP_FROM to deliver notifications"
+  exit 0
+fi
+
+log "starting: $*"
+cd /app || exit 1
+
+# The prefixing pipe cannot be in the success test: a pipeline reports the
+# status of its LAST command, so `web-ui ... | sed` returns sed's zero and a
+# job that panicked would be logged as finished. Capture the real status
+# through a fifo-free redirect instead, and report on that.
+status_file="$(mktemp)"
+{ ./web-ui "$@" 2>&1; echo "$?" > "$status_file"; } | sed "s/^/[cron:${name}] /"
+status="$(cat "$status_file")"
+rm -f "$status_file"
+
+if [ "$status" = "0" ]; then
+  log "finished"
+  exit 0
+fi
+log "FAILED (exit $status)"
+exit 1
