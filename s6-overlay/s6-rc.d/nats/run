@@ -1,0 +1,17 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+set +a
+
+# JetStream with memory-backed streams. The one live subject is
+# resource.vaulted, published and consumed inside this container, so the
+# delivery window is milliseconds; only a full container restart can drop an
+# event. Memory storage keeps the operator's docker run line unchanged, and
+# there is nowhere good to put a file store: $STORAGE_DIR turns directories
+# into S3 buckets, $DATA_DIR is swept by the autocleaner, and $PGDATA_DIR is
+# the database's. The server still writes its own JetStream metadata under
+# /tmp, which is what we want -- ephemeral.
+exec /app/nats-server \
+  --addr "$NATS_SERVICE_HOST" \
+  --port "$NATS_SERVICE_PORT" \
+  --jetstream 2>&1 | s6-log p"[nats]" 1

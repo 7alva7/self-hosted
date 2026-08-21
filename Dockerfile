@@ -28,6 +28,12 @@ FROM ghcr.io/webtor-io/vault:main@sha256:8dd99dfccd796360183b14a944296442f0c01ee
 # ghcr.io/webtor-io/**), so bumps here are deliberate and manual.
 FROM ghcr.io/versity/versitygw:latest@sha256:c4cbd9d9cb8dedbb055ac788dbd02635651b9b1cebac95b095b3217231aa87ad AS versitygw
 
+# Not webtor components: the event bus and the CLI that provisions its stream.
+# Both publish linux/amd64 and linux/arm64. Renovate does not watch either
+# (renovate.json matches ghcr.io/webtor-io/**), so bumps here are manual.
+FROM nats:alpine@sha256:d4ac35882ac65aff236cd65b9d3fa4d24332c681e1a85f94eedccd3cdd65b1da AS nats
+FROM natsio/nats-box:latest@sha256:ffce8bd103383f179f8c7f11cf645726acf5d17280706c530c3b342dbe16334c AS natsbox
+
 FROM alpine:${ALPINE_VER}
 
 ARG S6_OVERLAY_VER
@@ -67,6 +73,8 @@ COPY --from=srt2vtt /server ./srt2vtt
 COPY --from=torrent-http-proxy /server ./torrent-http-proxy
 COPY --from=rest-api /server ./rest-api
 COPY --from=versitygw /usr/local/bin/versitygw ./versitygw
+COPY --from=nats /usr/local/bin/nats-server ./nats-server
+COPY --from=natsbox /usr/local/bin/nats ./nats
 COPY --from=content-transcoder /app/server ./content-transcoder
 COPY --from=content-transcoder /app/player ./player
 COPY --from=web-ui /app/server ./web-ui/web-ui

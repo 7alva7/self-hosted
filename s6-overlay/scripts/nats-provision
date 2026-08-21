@@ -1,0 +1,69 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[nats-provision]" 1
+}
+
+url="nats://$NATS_SERVICE_HOST:$NATS_SERVICE_PORT"
+
+# Wait for the broker. nats-provision depends on nats, but s6 only guarantees
+# the process was started, not that it is accepting connections.
+i=0
+while [ "$i" -lt 60 ]; do
+  if /app/nats -s "$url" server check connection >/dev/null 2>&1; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+# Both vault and web-ui subscribe with nats.Bind, which fails unless the
+# stream AND the durable consumer already exist -- and web-ui's event handler
+# is part of its main serve group, so that failure crash-loops web-ui. This
+# oneshot is the reason that cannot happen, so it fails loudly instead of
+# letting a half-provisioned broker through.
+fail() {
+  log "FATAL: $1"
+  log "vault and web-ui bind to durable consumers that must exist before they start."
+  log "web-ui will not start against a half-provisioned broker."
+  exit 1
+}
+
+# JetStream returns the existing object when the requested configuration is
+# identical, so re-running this on every boot is a no-op. A genuine conflict
+# -- same name, different configuration -- exits non-zero and is reported.
+/app/nats -s "$url" stream add common \
+  --subjects='user.*,resource.*' \
+  --storage=memory \
+  --retention=limits \
+  --max-age=24h \
+  --replicas=1 \
+  --defaults >/dev/null 2>&1 || fail "could not create the 'common' stream"
+
+# Only resource.vaulted carries traffic in this image: user.updated is
+# published by the webhook service and resource.banned by the abuse pipeline,
+# neither of which ships here. All four must exist anyway -- each subscriber
+# binds to its own by name and errors if it is missing.
+add_consumer() {
+  name=$1
+  subject=$2
+  /app/nats -s "$url" consumer add common "$name" \
+    --filter="$subject" \
+    --ack=explicit \
+    --deliver=all \
+    --pull \
+    --wait=30s \
+    --replay=instant \
+    --max-deliver=-1 \
+    --defaults >/dev/null 2>&1 || fail "could not create the '$name' consumer"
+}
+
+add_consumer web-ui-resource-vaulted resource.vaulted
+add_consumer web-ui-resource-banned  resource.banned
+add_consumer web-ui-user-updated     user.updated
+add_consumer vault-resource-banned   resource.banned
+
+log "stream 'common' and four consumers are ready"
