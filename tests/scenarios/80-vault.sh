@@ -55,8 +55,14 @@ for cn in web-ui-resource-vaulted web-ui-resource-banned web-ui-user-updated vau
 done
 
 # 4. Vault is serving, not idling on sleep infinity after a fatal.
+#
+# curl's exit code, not "anything but connection-refused": accept only 0
+# (success) and 22 (--fail-with-body's own signal that the server answered
+# with a non-2xx, which is what an all-zero resource id should produce). A
+# missing or renamed curl binary exits 127 -- also "not 7" -- and used to
+# read as "vault is up" with the old `|| [ $? -ne 7 ]` check.
 vault_up() {
-  webtor_exec sh -c 'curl -sS --fail-with-body -o /dev/null http://127.0.0.1:8100/resource/0000000000000000000000000000000000000000 || [ $? -ne 7 ]' </dev/null
+  webtor_exec sh -c 'curl -sS --fail-with-body -o /dev/null http://127.0.0.1:8100/resource/0000000000000000000000000000000000000000; code=$?; [ "$code" -eq 0 ] || [ "$code" -eq 22 ]' </dev/null
 }
 wait_for 60 "vault answering on 127.0.0.1:8100" vault_up
 
@@ -115,7 +121,7 @@ webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-gc-unused vault gc </dev/
 after="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
 assert_eq "$after" "$before" "running the vault cron jobs changed web-ui's migration version -- gc ran against the wrong database"
 
-leaked_after="$(psql_db app "SELECT count(*) FROM pg_tables WHERE tablename IN ('file','resource_file')")"
+leaked_after="$(psql_db app "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('file','resource_file')")"
 assert_eq "$leaked_after" "0" "running the vault cron jobs created vault's tables in web-ui's database"
 
 echo "PASS: vault"
