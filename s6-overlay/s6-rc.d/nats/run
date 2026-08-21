@@ -3,6 +3,18 @@ set -a
 source /etc/webtor/common.env
 set +a
 
+# Provision the stream and its four durable consumers in the background, on
+# every start of this service -- not just the first. JetStream here is
+# memory-backed (see below), so a broker that restarts on its own (crash,
+# OOM kill) comes back with an empty stream and no consumers; without this,
+# nats-provision -- a oneshot that has already run once -- would never run
+# again, and vault/web-ui would keep fetching from durable consumers that no
+# longer exist. Same shape as s6-rc.d/postgres/run's own background
+# initializer: start the server, then bring the rest of the state up to
+# date from a backgrounded subshell/script instead of blocking the exec
+# below on it.
+/etc/s6-overlay/scripts/nats-create-stream &
+
 # JetStream with memory-backed streams. The one live subject is
 # resource.vaulted, published and consumed inside this container, so the
 # delivery window is milliseconds; only a full container restart can drop an
