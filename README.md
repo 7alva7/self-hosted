@@ -192,8 +192,9 @@ variables:
 - **AWS_THUMBNAIL_BUCKET** - bucket for thumbnails (default: thumbnails)
 
 To use an external S3 instead of the built-in store, set `USE_LOCALS3=false`,
-`AWS_ENDPOINT` and the credentials; the bucket variables still apply and
-point at buckets on that external store (which you must create yourself).
+`AWS_ENDPOINT` and the credentials; the bucket variables above still apply —
+plus `VAULT_AWS_BUCKET` (see [Configuring Vault](#configuring-vault) below) —
+and point at buckets on that external store (which you must create yourself).
 
 ## Configuring Vault
 
@@ -209,7 +210,7 @@ intended (see [Storage Layout](#storage-layout) above).
 
 - **USE_VAULT** - enable the vault service and its scheduled cleanup jobs (default: true)
 - **VAULT_PG_DATABASE** - database for Vault's own tables, separate from `PG_DATABASE` (default: vault)
-- **VAULT_AWS_BUCKET** - bucket (directory under `/storage`) Vault stores content in (default: vault)
+- **VAULT_AWS_BUCKET** - bucket Vault stores content in (default: vault); with the built-in store this is a directory under `/storage`, with an external S3 (`USE_LOCALS3=false`) it is a bucket on that store which you must create yourself
 
 Vault keeps its schema in its own database, never `PG_DATABASE` (web-ui's).
 With the embedded PostgreSQL (`USE_LOCALPG=true`, the default) this database
