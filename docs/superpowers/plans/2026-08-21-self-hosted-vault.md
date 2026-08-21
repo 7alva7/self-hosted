@@ -792,11 +792,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18081/vault
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18081/
 docker inspect -f 'RestartCount={{.RestartCount}}' vvoff
 ```
-Expected: the log line is present; no vault process; nothing on 8100; `/vault` returns 404 (routes not registered, which proves the blanked host reached web-ui); the front page still returns 200; RestartCount 0.
+Expected: the log line is present; no vault process; nothing on 8100; the front page still returns 200; RestartCount 0. `/vault` answers with web-ui's generic not-found handling — a 302 to `/?err=error.invalid_resource...`, byte-for-byte what any nonexistent path returns, not a bare 404. Compare it against a path you know does not exist rather than asserting a status code: the claim being tested is that the routes were never registered.
 
 - [ ] **Step 8: Negative control on the blanking**
 
-Remove the three-line `if` added in Step 3, rebuild, and re-run Step 7. Expected: `/vault` no longer returns 404 — web-ui registers the routes and points at a sleeping service. Restore the guard and confirm 404 returns. Report both directions verbatim.
+Remove the three-line `if` added in Step 3, rebuild, and re-run Step 7. Expected: `/vault` answers 200 — web-ui registers the routes and points at a sleeping service. Restore the guard and confirm the not-found response returns. Report both directions verbatim.
 
 - [ ] **Step 9: Clean up and commit**
 

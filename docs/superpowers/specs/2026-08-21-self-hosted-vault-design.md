@@ -275,8 +275,9 @@ than log lines:
 - a resource saved through web-ui reaches `/storage/vault`, and web-ui's
   `vault.resource.vaulted` flips to true — that last assertion is the one
   that proves the NATS path end to end, and it is the reason NATS is here;
-- with `USE_VAULT=false` the service idles, `/vault` returns 404, and web-ui
-  stays healthy.
+- with `USE_VAULT=false` the service idles, `/vault` is not registered — web-ui
+  answers it the way it answers any nonexistent path, a 302 to the error page
+  rather than a bare 404 — and web-ui stays healthy.
 
 Each guard added by this work needs a negative control: remove the guard,
 watch the test go red. The provisioning oneshot in particular — a scenario
