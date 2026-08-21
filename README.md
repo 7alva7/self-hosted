@@ -19,7 +19,7 @@ This is the self-hosted version of [webtor.io](https://webtor.io), implemented a
 1. [Install Docker](https://docs.docker.com/get-docker/).
 2. Start your Webtor instance with the following command:
    ```bash
-   docker run -d -p 8080:8080 -v data:/data -v pgdata:/pgdata --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+   docker run -d -p 8080:8080 -v data:/data -v pgdata:/pgdata -v storage:/storage --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
    ```
 3. Access the UI at <http://localhost:8080>.
 4. You're all set!
@@ -39,7 +39,7 @@ By default the instance is open: anyone who can reach it has full access. Set a
 password from the profile page, or start the container with one:
 
 ```bash
-docker run -e ADMIN_PASSWORD=your-password -d -p 8080:8080 -v data:/data -v pgdata:/pgdata \
+docker run -e ADMIN_PASSWORD=your-password -d -p 8080:8080 -v data:/data -v pgdata:/pgdata -v storage:/storage \
   --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
 ```
 
@@ -94,13 +94,13 @@ shapes; only the host path prefix and the authentication requirement changed.
 If you plan to access your instance from a different host or domain, set the `DOMAIN` environment variable like this:
 
 ```bash
-docker run -e DOMAIN=https://example.com -d -p 8080:8080 -v data:/data -v pgdata:/pgdata --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+docker run -e DOMAIN=https://example.com -d -p 8080:8080 -v data:/data -v pgdata:/pgdata -v storage:/storage --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
 ```
 
 ## Setting Custom Port
 
 ```bash
-docker run -e DOMAIN=http://localhost:8085 -d -p 8085:8080 -v data:/data -v pgdata:/pgdata --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+docker run -e DOMAIN=http://localhost:8085 -d -p 8085:8080 -v data:/data -v pgdata:/pgdata -v storage:/storage --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
 ```
 
 ## Configuring the Autocleaner
@@ -128,10 +128,48 @@ By default Webtor uses an embedded PostgreSQL database. You can configure the da
 - **PG_PASSWORD** - password for postgres (default: app)
 - **PG_DATABASE** - database for postgres (default: app)
 
+## Storage Layout
+
+The container writes to three directories, and losing each one costs something
+different:
+
+- **`/data`** — the torrent download cache. Disposable: Webtor re-downloads
+  whatever it needs from the swarm, so losing it costs time and bandwidth, not
+  data.
+- **`/pgdata`** — the embedded PostgreSQL database (accounts, your library,
+  settings). Not disposable — there is nothing to re-fetch it from.
+- **`/storage`** — the embedded S3 store. Part of it is a cache (posters,
+  thumbnails) as disposable as `/data`; part of it is user-uploaded subtitles,
+  which are not disposable — nobody else has your copy.
+
+Mount all three as real volumes:
+
+```bash
+docker run -d -p 8080:8080 -v data:/data -v pgdata:/pgdata -v storage:/storage \
+  --name webtor --restart=always ghcr.io/webtor-io/self-hosted:latest
+```
+
+`/storage` specifically must be a **named Docker volume**, not a bind mount to
+a host directory. The embedded S3 store keeps object metadata — etag, content
+type, checksums, multipart state — in filesystem extended attributes, and bind
+mounts from macOS and Windows (and some network filesystems on Linux) do not
+support them. When that's the case the store logs a clear error and idles
+instead of crash-looping — check `docker logs webtor` for a `[s3]`-prefixed
+message if it never comes up.
+
+If you ever need to copy `/storage` elsewhere (backup, moving to another
+host), use a tool that preserves extended attributes — `rsync -X`, `cp -a`, or
+`tar --xattrs`. A plain `cp -r`, or an archiver that drops xattrs, silently
+throws away the object metadata the store depends on.
+
+To move any of these paths, set `DATA_DIR`, `PGDATA_DIR` or `STORAGE_DIR` and
+point your volume at the new path instead.
+
 ## Configuring S3 Storage
 
 By default Webtor runs an embedded S3-compatible store (versitygw over a local
-directory) for the poster cache, user-uploaded subtitles and thumbnails.
+directory, see [Storage Layout](#storage-layout) above for the volume
+requirements) for the poster cache, user-uploaded subtitles and thumbnails.
 Credentials are generated on first boot and persisted, so they survive
 container restarts. You can configure it using the following environment
 variables:
