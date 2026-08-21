@@ -205,6 +205,14 @@ names for itself: `WEB_PORT=$VAULT_SERVICE_PORT`,
 `/etc/webtor/secrets/s3.env` for the S3 credentials, and reaches rest-api
 over the existing `REST_API_SERVICE_HOST`/`PORT`.
 
+It also sets `USE_INTERNAL_TORRENT_HTTP_PROXY=true`. rest-api builds export
+URLs from `DOMAIN`, which names how the instance is reached from outside — a
+published host port, or a public hostname that does not resolve inside the
+container. That flag makes vault rewrite the host of every content URL to the
+in-container proxy before fetching. Without it the worker fetches from an
+address that does not exist in here, nothing is ever stored, and the service
+itself looks healthy throughout.
+
 Left unset deliberately: `S3_CACHE_URL` (a production DaemonSet),
 `VAULT_VERIFY_*` (a manual ops command), `RESOURCE_ID` (a debug knob).
 
