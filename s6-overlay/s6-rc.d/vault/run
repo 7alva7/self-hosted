@@ -28,6 +28,15 @@ WEBTOR_API_SECRET=$API_SECRET
 # from an address that does not exist inside the container and nothing is ever
 # stored, while the service itself looks healthy.
 USE_INTERNAL_TORRENT_HTTP_PROXY=true
+# rest-api's own run script sets EXPORT_PATH_PREFIX=/torrent-http-proxy/ so
+# nginx (the single entrypoint on 8080) can route exported URLs to
+# torrent-http-proxy by path instead of by subdomain -- nginx strips that
+# prefix before proxying. torrent-http-proxy's own router has no notion of
+# it: hit directly (as the internal rewrite above does, bypassing nginx),
+# the prefix must be stripped here instead, or every fetch 404s/500s on a
+# path torrent-http-proxy cannot parse while the service still reports
+# healthy. Keep this in sync with rest-api/run's EXPORT_PATH_PREFIX.
+TORRENT_HTTP_PROXY_PATH_PREFIX=/torrent-http-proxy/
 set +a
 
 # cd into vault's own directory, not /app. common-services discovers
