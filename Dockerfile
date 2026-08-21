@@ -19,6 +19,7 @@ FROM ghcr.io/webtor-io/torrent-http-proxy:master@sha256:66826afad417782cfffc1d91
 FROM ghcr.io/webtor-io/rest-api:main@sha256:b626a44bf6706db929b7321f86d9126abc30f76a7b39b5187de2855fe35aee99 AS rest-api
 FROM ghcr.io/webtor-io/web-ui:main@sha256:eb264afdd6b91fe632b77f3ec4b13da9b7abdb5a3a7725004e8622df78219aff AS web-ui
 FROM ghcr.io/webtor-io/nginx-vod:main@sha256:4d9aaa6ac3dc2e3e73bdf8afd47d4ffab0a932f22b91a4c8cdd7674290bd89dd AS nginx-vod
+FROM ghcr.io/webtor-io/vault:main@sha256:8dd99dfccd796360183b14a944296442f0c01ee5fb01e8e1d1f0f6a1a6744fea AS vault
 
 # Not a webtor component: the S3 gateway backing /storage. Apache 2.0, one
 # static binary, and its posix backend keeps objects as ordinary files so a
@@ -74,6 +75,13 @@ COPY --from=web-ui /app/pub ./pub
 COPY --from=web-ui /app/migrations ./migrations
 COPY --from=web-ui /app/assets/dist ./assets/dist
 COPY --from=nginx-vod /usr/local/nginx /usr/local/nginx
+
+# Vault gets its own working directory, not /app, because common-services
+# discovers migrations at the CWD-relative path "migrations" -- and /app/migrations
+# is web-ui's 69 migrations. Started from /app, vault would apply web-ui's schema
+# to vault's database.
+COPY --from=vault /server ./vault/vault
+COPY --from=vault /migrations ./vault/migrations
 
 COPY etc/webtor /etc/webtor
 COPY etc/nginx/conf /usr/local/nginx/conf
