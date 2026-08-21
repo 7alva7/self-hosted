@@ -51,6 +51,16 @@ migrations and apply them to vault's database.
 **Therefore:** vault gets its own working directory, `/app/vault/`, holding
 the binary and its `migrations/`. Its run script does `cd /app/vault`.
 
+> **Annotated after implementation (2026-08-21).** The conclusion held, but
+> the mechanism above stopped being accurate during the work. web-ui was
+> moved into `/app/web-ui/` — a change made to remove this trap for every
+> future component, not just vault — so `/app/migrations` no longer exists.
+> A wrong-CWD vault today finds no `migrations` directory at all: it creates
+> `gopg_migrations` at version 0, makes no tables, and fails later on a query
+> against a table that was never created. Still silent, still worth guarding
+> against, but no longer "applies web-ui's schema". Left in place because a
+> design record should read as what was true when it was written.
+
 This departs from the repo's one-binary-per-`/app/<name>` convention, which
 `CLAUDE.md` calls the only link between Dockerfile and runtime. Document the
 exception where that convention is stated.
