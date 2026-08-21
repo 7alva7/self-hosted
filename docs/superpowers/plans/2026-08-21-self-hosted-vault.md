@@ -1211,6 +1211,88 @@ git commit -m "test: cover vault end to end, including the vaulted event"
 
 ---
 
+## Task 8b: Publish the vault path-prefix fix and pin it
+
+**Repository:** the fix is in `/Users/vintikzzzz/Projects/webtor/vault`; the pin
+is in this repo's `Dockerfile`.
+
+**Files:**
+- Modify: `vault` repo — `services/api.go` (the patch already exists, uncommitted)
+- Modify: `Dockerfile` (the vault stage's digest)
+
+**Interfaces:**
+- Produces: a published vault image whose internal-proxy path handling works,
+  and its new digest.
+
+Task 8 found that vault stores nothing in this image. rest-api bakes
+`EXPORT_PATH_PREFIX=/torrent-http-proxy/` into every export URL, because
+nginx fronts all services on one port and routes them by path. nginx strips
+that prefix when proxying (`proxy_pass http://remote/;`), so
+torrent-http-proxy has never seen it and expects the infohash as the first
+path segment. Vault, going internal, rewrote only the host and kept the
+path — so every fetch went to a path torrent-http-proxy cannot parse, and
+every pledge hung at `vaulted=false` forever with the only trace in vault's
+own log.
+
+The fix adds `TORRENT_HTTP_PROXY_PATH_PREFIX`, empty by default, and strips
+it only when set. Production does not set it — and explicitly does not enable
+`USE_INTERNAL_TORRENT_HTTP_PROXY` at all (`values/rest-api.yaml.gotmpl`
+carries a comment saying why) — so this is a no-op there.
+
+- [ ] **Step 1: Apply and review the patch**
+
+The patch is at
+`.superpowers/sdd/2026-08-21-self-hosted-vault/vault-torrent-http-proxy-path-prefix.patch`.
+Apply it in the vault repo and read the result. Confirm the stripping is
+conditional on a non-empty prefix, so an unset variable changes nothing.
+
+- [ ] **Step 2: Prove the stripping logic in isolation before publishing**
+
+Write a Go test in the vault repo covering `makeTorrentHTTPProxyRequest`:
+prefix set and URL carrying it (stripped), prefix set and URL not carrying it
+(unchanged), prefix empty (unchanged). Run it, then delete the stripping
+branch and confirm the first case fails. Report both directions. Publishing
+an unproven fix to a production repository is what this step prevents.
+
+- [ ] **Step 3: Commit and push**
+
+```bash
+git add services/api.go services/api_test.go
+git commit -m "fix: strip the edge path prefix when fetching through the internal proxy"
+git push
+```
+
+- [ ] **Step 4: Wait for the build and record the digest**
+
+```bash
+gh run watch
+docker buildx imagetools inspect ghcr.io/webtor-io/vault:main | grep -E "^Digest|Platform"
+```
+Expected: both `linux/amd64` and `linux/arm64`, and a digest different from
+`sha256:8dd99dfccd796360183b14a944296442f0c01ee5fb01e8e1d1f0f6a1a6744fea`.
+
+- [ ] **Step 5: Pin it**
+
+Replace the digest on the vault `FROM` line in this repo's `Dockerfile`.
+
+- [ ] **Step 6: Run the suite against the published image**
+
+```bash
+WEBTOR_HOST_PORT=18080 tests/run.sh <tag>
+```
+Expected: `SUITE PASSED` including `PASS: vault`. This is the run that matters:
+until now the scenario has only passed against a locally patched image, so the
+feature was unproven on anything anyone could actually pull.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Dockerfile
+git commit -m "build: pin the vault image carrying the path-prefix fix"
+```
+
+---
+
 ## Task 9: Documentation
 
 **Files:**
