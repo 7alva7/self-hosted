@@ -18,17 +18,26 @@ psql_db() {
 # 1. Vault migrated its own database. If its working directory were /app it
 # would find no "migrations" directory at all now (web-ui's own moved under
 # /app/web-ui), so it would silently apply none of its own -- caught below
-# by the missing resource/file/resource_file tables, not by the version
-# number: gopg_migrations would sit at 0, comfortably under the <=8 bound
-# checked further down, so that bound alone would not catch this failure.
+# by the missing resource/file/resource_file tables.
 for t in resource file resource_file; do
   got="$(psql_db vault "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='$t'")"
   assert_eq "$got" "1" "vault database is missing its own table '$t'"
 done
 
+# One version number, two failure modes, so two bounds with two messages
+# instead of one that would name the wrong cause either way it broke:
+# - lower bound: a wrong working directory now leaves gopg_migrations at 0
+#   (see above) rather than jumping past vault's migrations, so only a
+#   floor catches it -- an upper-only bound would let this slip through.
+# - upper bound: a shared database (VAULT_PG_DATABASE pointed at web-ui's)
+#   would show web-ui's much higher version instead. It's a loose threshold,
+#   not vault's exact migration count, so vault growing new migrations of
+#   its own doesn't trip a false alarm here.
 version="$(psql_db vault "SELECT coalesce(max(version),0) FROM gopg_migrations")"
-[ "$version" -le 8 ] \
-  || fail "vault's database is at migration version $version, past vault's own highest migration (8) -- something applied migrations that aren't vault's"
+[ "$version" -ge 1 ] \
+  || fail "vault's database is at migration version 0 -- it applied no migrations at all, which is what happens when vault runs from a working directory with no migrations/ beside it"
+[ "$version" -lt 60 ] \
+  || fail "vault's database is at migration version $version, far past vault's own handful -- it is sharing web-ui's database instead of having its own"
 
 # 2. And nothing of vault's leaked into web-ui's database.
 leaked="$(psql_db app "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('resource','file','resource_file')")"
