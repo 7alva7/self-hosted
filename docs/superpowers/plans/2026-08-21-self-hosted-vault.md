@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-21-self-hosted-vault-design.md`
 
+**Note (added after implementation, 2026-08-21):** several passages below state that a vault started from `/app` "would apply web-ui's 69 migrations" to vault's database. That was accurate when this plan was written, but this same plan's Step 6 ("Prove the app actually works from the new directory") later gives web-ui its own directory under `/app/web-ui` -- so by the time vault's own steps run, `/app/migrations` belongs to no one. A wrong-CWD vault now silently discovers zero migrations and creates none of its own tables, rather than colliding with web-ui's schema. The task list and the working-directory guard it describes are unchanged; only the failure that guard prevents is different. See `CLAUDE.md`'s Vault section for the current mechanism.
+
 ## Global Constraints
 
 - Every variable added to `etc/webtor/common.template.env` uses the `${VAR:-default}` form, so `docker run -e` can override it. Exception, matching every other internal service: `*_SERVICE_HOST`/`*_SERVICE_PORT` are fixed at loopback and are deliberately **not** overridable.
