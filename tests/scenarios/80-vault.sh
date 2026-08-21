@@ -16,8 +16,11 @@ psql_db() {
 }
 
 # 1. Vault migrated its own database. If its working directory were /app it
-# would have discovered web-ui's 69 migrations and applied those instead, so
-# the version is the observable difference, not a detail.
+# would find no "migrations" directory at all now (web-ui's own moved under
+# /app/web-ui), so it would silently apply none of its own -- caught below
+# by the missing resource/file/resource_file tables, not by the version
+# number: gopg_migrations would sit at 0, comfortably under the <=8 bound
+# checked further down, so that bound alone would not catch this failure.
 for t in resource file resource_file; do
   got="$(psql_db vault "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='$t'")"
   assert_eq "$got" "1" "vault database is missing its own table '$t'"
@@ -25,7 +28,7 @@ done
 
 version="$(psql_db vault "SELECT coalesce(max(version),0) FROM gopg_migrations")"
 [ "$version" -le 8 ] \
-  || fail "vault's database is at migration version $version; vault has 8 of its own, so it applied web-ui's instead"
+  || fail "vault's database is at migration version $version, past vault's own highest migration (8) -- something applied migrations that aren't vault's"
 
 # 2. And nothing of vault's leaked into web-ui's database.
 leaked="$(psql_db app "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('resource','file','resource_file')")"

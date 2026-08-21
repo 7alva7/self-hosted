@@ -85,9 +85,10 @@ COPY --from=web-ui /app/assets/dist ./web-ui/assets/dist
 COPY --from=nginx-vod /usr/local/nginx /usr/local/nginx
 
 # Vault gets its own working directory, not /app, because common-services
-# discovers migrations at the CWD-relative path "migrations" -- and /app/migrations
-# is web-ui's 69 migrations. Started from /app, vault would apply web-ui's schema
-# to vault's database.
+# discovers migrations at the CWD-relative path "migrations". Since web-ui
+# moved into ./web-ui above, /app/migrations does not exist for anyone --
+# started from /app, vault would silently discover zero migrations, create
+# an empty gopg_migrations table, and never create its own schema.
 COPY --from=vault /server ./vault/vault
 COPY --from=vault /migrations ./vault/migrations
 
