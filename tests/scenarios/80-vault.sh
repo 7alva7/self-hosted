@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Vault stores a torrent permanently and tells web-ui that it did.
+#
+# Not re-runnable against a warm container: smoke.torrent has a fixed
+# infohash, so a second `POST /vault/pledges` for it answers 409 and
+# assertion 5 below never sees vaulted=true. Harmless in CI, because
+# tests/run.sh recreates the container for every run -- but re-invoking this
+# script by hand against a container it already ran in will fail here, and
+# any scenario added after this one in the suite would inherit an
+# already-pledged resource if the suite ever stops being one-shot-per-run.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 # psql_db <database> <sql> -- one scalar out of the embedded postgres.
@@ -72,11 +80,20 @@ stored="$(webtor_exec sh -c 'find /storage/vault -type f | head -1' </dev/null |
 
 # 6. Running the cron jobs must not touch web-ui's database. The wrapper
 # sources common.env, where PG_DATABASE names web-ui's database, so the gc
-# branch has to override it -- and a naive dispatch already ran gc against
-# web-ui's database once during implementation, applying vault's migrations
-# there and then sweeping nothing forever. That override now exists in two
-# places (the wrapper and s6-rc.d/vault/run), so a rename in one and not the
-# other silently restores the bug. This is what would notice.
+# branch has to override it. That override now exists in two places (the
+# wrapper and s6-rc.d/vault/run), so a rename in one and not the other
+# silently restores the bug.
+#
+# By the time this scenario runs, app is already migrated to version 69 --
+# past vault's own 8 -- so a misdirected gc does NOT quietly apply vault's
+# migrations and sweep nothing: it hard-fails immediately with
+# `ERROR #42P01 relation "file" does not exist`, because gc's sweep query
+# reads from a table that only exists in vault's own database. That failure
+# is caught by the `|| fail "cron job vault-gc-unused failed"` exit-status
+# check right below, before either assert_eq further down ever runs. The two
+# assert_eq's are a backstop for a different failure mode: someone changing
+# the job to swallow that error and return 0 anyway, in which case the
+# exit-status check would no longer notice.
 before="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
 webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-reap vault reap </dev/null >/dev/null \
   || fail "cron job vault-reap failed"

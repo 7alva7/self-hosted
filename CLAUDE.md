@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 11 сервисов платформы + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
+`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 12 сервисов платформы (включая `vault`) + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) + событийная шина NATS (nats-server/nats-box, тоже не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
 
 Общий контекст платформы (архитектура сервисов, matryoshka chaining и т.д.) — в `../CLAUDE.md`.
 
@@ -23,7 +23,8 @@ docker logs webtor        # логи всех сервисов с префикс
 
 # End-to-end смоук-сьют: boot, DDL, zip-архив, HLS (nginx-vod), транскодирование
 # (session API content-transcoder), субтитры, персистентность после рестарта,
-# embedded S3 (подписанный round-trip объекта через 127.0.0.1:8099 изнутри контейнера)
+# embedded S3 (подписанный round-trip объекта через 127.0.0.1:8099 изнутри контейнера),
+# vault (пледж торрента, событие через NATS, файл в /storage/vault, cron-джобы)
 tests/run.sh webtor-self-hosted:assembly
 ```
 
@@ -39,7 +40,7 @@ tests/run.sh webtor-self-hosted:assembly
 
 Штатный путь — Renovate (`renovate.json`): следит за `ghcr.io/webtor-io/**`, при появлении нового дайджеста под тем же тегом открывает отдельный PR на компонент (намеренно не групповой — так по упавшей смоук-джобе из `.github/workflows/test.yml` сразу видно, какой компонент виноват).
 
-Исключение — `versitygw` (сторонний S3-гейтвей за `/storage`, единственный не webtor-компонент среди стейджей Dockerfile): он тоже пинится по тегу+дайджесту, но `renovate.json` матчит только `ghcr.io/webtor-io/**`, так что Renovate его не видит. Бамп только ручной, тем же способом, что описан ниже.
+Исключение — не-webtor стейджи Dockerfile: `versitygw` (сторонний S3-гейтвей за `/storage`) и `nats`/`natsbox` (событийная шина и её CLI, образы `nats:alpine`/`natsio/nats-box`). Все трое пинятся по тегу+дайджесту так же, как остальные стейджи, но `renovate.json` матчит только `ghcr.io/webtor-io/**`, так что Renovate их не видит. Бамп только ручной, тем же способом, что описан ниже.
 
 Ручной бамп — то же самое руками: узнать новый дайджест образа (например, `docker buildx imagetools inspect ghcr.io/webtor-io/<svc>:<tag>`) и заменить `@sha256:...` в соответствующей строке `FROM`. Тег (`master`/`main`, в зависимости от компонента — см. Dockerfile) обычно не трогают.
 
@@ -53,8 +54,10 @@ Multi-stage, но ничего не компилируется. Каждый `FR
 - `web-ui` — `/app/server` → `/app/web-ui`, плюс `templates/`, `pub/`, `migrations/`, `assets/dist`
 - `nginx-vod` — весь `/usr/local/nginx` целиком (бинарник + уже вкомпилированные модули Kaltura `nginx-vod-module`/`nginx-secure-token-module`)
 - `versitygw` — не webtor-компонент (сторонний S3-гейтвей от Versity, Apache 2.0): один бинарник `/usr/local/bin/versitygw` → `/app/versitygw`. Пинится по тегу+дайджесту как остальные стейджи, но Renovate его не отслеживает (см. «Как обновить версию сервиса»)
+- `vault` — `/server` → `/app/vault/vault`, плюс `/migrations` → `/app/vault/migrations`: своя рабочая директория, как у web-ui, и по той же причине — миграции ищутся по CWD-относительному пути (см. раздел «Vault» ниже)
+- `nats`/`natsbox` — не webtor-компоненты (событийная шина и её CLI, готовые образы `nats:alpine`/`natsio/nats-box`, Renovate их не отслеживает — см. «Как обновить версию сервиса»): `/usr/local/bin/nats-server` → `/app/nats-server`, `/usr/local/bin/nats` → `/app/nats`
 
-**Важно:** имя бинарника под `/app/<name>` должно совпадать с тем, что вызывает соответствующий s6 run-скрипт (`s6-overlay/s6-rc.d/<name>/run`) — это единственная связь между Dockerfile и рантаймом, и её легко разорвать при добавлении нового компонента.
+**Важно:** имя бинарника под `/app/<name>` должно совпадать с тем, что вызывает соответствующий s6 run-скрипт (`s6-overlay/s6-rc.d/<name>/run`) — это единственная связь между Dockerfile и рантаймом, и её легко разорвать при добавлении нового компонента. Исключение — `nats`: s6-сервис называется `nats`, но его run-скрипт запускает `/app/nats-server`; `/app/nats` — это CLI (`nats-box`), которым пользуется `nats-provision` и смоук-тесты, а не сервис.
 
 s6-overlay качается двумя тарболами: noarch (общий для всех архитектур) и архитектурный, который выбирается по build-arg `TARGETARCH` (`amd64` → `x86_64`, `arm64` → `aarch64`; buildx подставляет `TARGETARCH` автоматически при мультиплатформенной сборке). На любой другой архитектуре стадия падает явной ошибкой (`unsupported TARGETARCH: ...`), а не тихо собирает нерабочий образ.
 
@@ -85,7 +88,7 @@ s6-overlay качается двумя тарболами: noarch (общий д
 
 Сервисы находят друг друга через переменные `<SVC>_SERVICE_HOST/PORT` (все на 127.0.0.1) — тот же механизм, что K8s-сервисы в проде. `etc/webtor/torrent-http-proxy/config.yaml` мапит matryoshka-имена (`hls`, `vod`, `arch`, `vtt`, `ext`) на сервисы через `endpointsProvider: Environment`.
 
-Карта портов: 8080 nginx (вход), 8090–8098 HTTP-сервисы, 8099 embedded S3 (versitygw, только 127.0.0.1, nginx не проксирует), 50051/50052 gRPC (torrent-store, magnet2torrent), 6379 Redis, 5432 PostgreSQL.
+Карта портов: 8080 nginx (вход), 8090–8098 HTTP-сервисы, 8099 embedded S3 (versitygw, только 127.0.0.1, nginx не проксирует), 8100 vault (только 127.0.0.1, nginx не проксирует), 4222 NATS (только 127.0.0.1, nginx не проксирует), 50051/50052 gRPC (torrent-store, magnet2torrent), 6379 Redis, 5432 PostgreSQL.
 
 ### Маршрутизация (etc/nginx/conf/nginx.template.conf)
 
@@ -103,17 +106,39 @@ Nginx — единственная входная точка (8080): `/` → web
 
 ### PostgreSQL
 
-Embedded-инстанс (`s6-rc.d/postgres/run`): initdb при первом старте в `/pgdata`, фоновый инициализатор создаёт роль/базу `app`. `USE_LOCALPG=false` отключает его полностью (сервисы идут на внешний `PG_HOST`). Миграции схемы применяет web-ui из своих `migrations/`.
+Embedded-инстанс (`s6-rc.d/postgres/run`): initdb при первом старте в `/pgdata`, фоновый инициализатор создаёт роль/базу `app`, а также отдельную базу `vault` (`VAULT_PG_DATABASE`) — см. раздел «Vault» ниже про то, зачем ей нужна отдельная база. `USE_LOCALPG=false` отключает и создание баз, и локальный сервер целиком (сервисы идут на внешний `PG_HOST`) — в этом режиме обе базы, `app` и `vault`, оператор создаёт сам (см. README). Миграции схемы применяет web-ui из своих `migrations/`.
 
 ### Embedded S3
 
 `s6-rc.d/s3/run` запускает `versitygw` (posix-бэкенд) над `$STORAGE_DIR` (по умолчанию `/storage`) на `127.0.0.1:8099` — как и остальные внутренние сервисы, наружу не публикуется и nginx его не проксирует.
 
-Бакет для versitygw — это просто директория внутри `$STORAGE_DIR`: posix-бэкенд отдаёт в `ListBuckets` то, что там физически есть. Никакого отдельного API создания бакетов нет — `run`-скрипт сам делает `mkdir -p` для четырёх директорий (`vault`, `posters`, `subtitles`, `thumbnails`), уже после того, как проверил, что хранилище доступно на запись и поддерживает extended attributes. На сегодня `vault` никем не читается — зарезервирован под ещё не влитый сервис vault (следующий суб-проект, см. `docs/superpowers/specs/2026-08-21-self-hosted-vault-design.md`); `posters`/`subtitles`/`thumbnails` уже используются web-ui через `AWS_*_BUCKET` в `common.template.env`.
+Бакет для versitygw — это просто директория внутри `$STORAGE_DIR`: posix-бэкенд отдаёт в `ListBuckets` то, что там физически есть. Никакого отдельного API создания бакетов нет — `run`-скрипт сам делает `mkdir -p` для четырёх директорий (`vault`, `posters`, `subtitles`, `thumbnails`), уже после того, как проверил, что хранилище доступно на запись и поддерживает extended attributes. `vault` (`VAULT_AWS_BUCKET`) — бакет сервиса vault, см. раздел «Vault» ниже; `posters`/`subtitles`/`thumbnails` используются web-ui через `AWS_*_BUCKET` в `common.template.env`.
 
 versitygw's posix-бэкенд хранит метаданные объекта (etag, content type, checksums, multipart state) в extended attributes файловой системы. Bind-mount с macOS или Windows их не поддерживает (как и некоторые сетевые ФС на Linux), поэтому `run`-скрипт перед стартом отдельно проверяет записываемость `$STORAGE_DIR` (`touch`) и поддержку xattr (`setfattr`) — это две разные проверки с двумя разными сообщениями, потому что у них разные причины и разные исправления (права/read-only-mount против типа тома). При провале любой из них сервис не крашится в рестарт-луп s6, а логирует `FATAL`-сообщение с инструкцией и делает `exec sleep infinity` (s6 иначе перезапускал бы упавший longrun бесконечно). Практическое следствие для оператора — `/storage` должен быть именованным docker-volume, не host-директорией (см. README, раздел Storage Layout).
 
 `USE_LOCALS3=false` отключает встроенный стор тем же способом — `run`-скрипт логирует это и уходит в `sleep infinity`, ожидая, что `AWS_ENDPOINT` указывает на внешний S3.
+
+### NATS (событийная шина)
+
+`s6-rc.d/nats/run` запускает `/app/nats-server --jetstream` на `$NATS_SERVICE_HOST:$NATS_SERVICE_PORT` (127.0.0.1:4222, наружу не проксируется). JetStream-стрим один — `common` (`--storage=memory`, subjects `user.*,resource.*`, `--max-age=24h`) — и в нём четыре durable pull-консьюмера, которые провизионит oneshot `nats-provision` (`s6-overlay/scripts/nats-provision`, зависит от `nats`, ждёт до 60s, пока брокер начнёт отвечать на `nats server check connection`): `web-ui-resource-vaulted` (`resource.vaulted`), `web-ui-resource-banned` (`resource.banned`), `web-ui-user-updated` (`user.updated`), `vault-resource-banned` (`resource.banned`).
+
+В этом образе реально ходит трафик только по `resource.vaulted` (публикует vault, подписывается web-ui) — остальные три существуют только потому, что подписчики биндятся к своему durable-консьюмеру по имени и падают, если его нет; публикующие сервисы для `user.updated` (webhook) и `resource.banned` (abuse-пайплайн) в этот образ не входят.
+
+`--storage=memory` — намеренный выбор, а не недосмотр: писать метаданные стрима больше некуда — `$STORAGE_DIR` превращает директории в S3-бакеты, `$DATA_DIR` подметает автоклинер, `$PGDATA_DIR` принадлежит Postgres. Сервер всё равно пишет служебные данные JetStream под `/tmp`, и это тоже осознанно — эфемерность здесь и нужна. Цена — стрим теряется при рестарте контейнера, но событие живёт между публикацией и потреблением внутри одного контейнера считаные миллисекунды, так что реальное окно потери — сам рестарт, а не обычная работа.
+
+Провизионирование — жёсткая зависимость, а не best-effort: и vault, и web-ui подписываются через `nats.Bind`, который падает с ошибкой, если стрим и durable-консьюмер уже не существуют, а обработчик событий web-ui смонтирован как часть его основной serve-группы — неудачный bind укладывает web-ui в рестарт-луп. Поэтому `nats-provision` при конфликте или недоступном брокере не молчит, а фейлится явно (`fail()`, exit 1) вместо того, чтобы пропустить непровизионированный брокер.
+
+### Vault
+
+**Ловушка в имени.** «Vault» здесь — это две разные вещи с таблицей `resource` в обеих. Первая — отдельная база `vault` (см. ниже): таблицы `resource`, `file`, `resource_file` в схеме `public`, миграции 1–8 (`vault/migrations`). Вторая — схема `vault` **внутри** базы web-ui (`app`): таблицы `vault.pledge`, `vault.user_vp`, `vault.tx_log` и свой `vault.resource` (модели в `web-ui/models/vault/*.go`, тег `pg:"vault.<table>"`). Запрос к «vault.resource» без уточнения, о какой базе речь, с равной вероятностью читается как обе — это про пледжи и очки (`vault.resource` в `app`) или про сами сохранённые файлы (`resource` в базе `vault`).
+
+`s6-rc.d/vault/run` запускает `vault serve` из собственной рабочей директории `/app/vault`, а не `/app`. Причина та же, что у web-ui: `common-services` (`pgmigration.go`) ищет миграции по CWD-относительному пути `migrations` (`col.DiscoverSQLMigrations("migrations")`). Комментарий в самом `run`-скрипте объясняет это как «иначе применились бы 69 миграций web-ui» — но со времени рефакторинга, переселившего web-ui в `/app/web-ui` (см. bullet `web-ui` выше), `/app/migrations` уже не путь ни к чьим миграциям: `go-pg/migrations` на отсутствующей директории молча считает, что миграций ноль (`DiscoverSQLMigrationsFromFilesystem` явно возвращает `nil` на `os.IsNotExist`), и `vault serve` из `/app` создал бы пустую таблицу `gopg_migrations` и ни одной своей таблицы — не чужую схему, а вообще никакую. Комментарий в коде описывает более старую (и более наглядную) версию этой опасности; текущий эффект тише, но так же ломает vault. Второй, независимый механизм — своя база (`VAULT_PG_DATABASE`, по умолчанию `vault`), отдельная от `PG_DATABASE` web-ui (`app`): `go-pg/migrations` хранит номер применённой версии одной строкой на базу данных, так что общая база означала бы, что vault увидит чужую (более высокую, 69) версию, решит, что уже мигрирован, и тоже не создаст ни одной своей таблицы.
+
+Обе ошибки молчаливые: сервис в обоих случаях стартует и выглядит здоровым (`vault serve` не падает), просто нет таблиц vault → сохранять в vault нечего. Тест `tests/scenarios/80-vault.sh` целится именно в этот класс ошибок: шаг 1 сверяет `gopg_migrations.version` в базе `vault` (должно быть ≤8, а не 69 — сигнал, что вместо своей рабочей директории/базы vault попал на чужую), шаг 2 — что таблиц vault нет в `app`.
+
+`run`-скрипт переопределяет под vault как generic-переменные (`WEB_PORT`, `PG_DATABASE`, `AWS_BUCKET` — тот же паттерн, что у остальных сервисов), так и две специфичные для него: `USE_INTERNAL_TORRENT_HTTP_PROXY=true` (rest-api подписывает export-ссылки на `DOMAIN`, который снаружи контейнера не обязан резолвиться, поэтому vault переписывает хост каждой ссылки на внутренний прокси перед фетчем) и `TORRENT_HTTP_PROXY_PATH_PREFIX=/torrent-http-proxy/` (vault бьёт torrent-http-proxy напрямую, в обход nginx, а значит должен сам снять префикс, который в обычном случае снимает nginx).
+
+Cron (`etc/webtor/cron/crontab`, через `run-cron-job`): `vault-reap` (`0 * * * *`) — это подкоманда web-ui, expire просроченных пледжей в таблицах web-ui; `vault-gc-unused` (`0 4 * * *`) — подкоманда самого vault, подметает файлы, на которые не ссылается ни одна строка `resource_file`. Для `vault-gc-unused` `run-cron-job` переключает `bin_dir`/`bin` на `/app/vault`/`./vault` и переопределяет `PG_DATABASE`/`AWS_BUCKET` на vault-овые — та же защита от той же ошибки (gc против базы web-ui), продублированная во втором месте; рассинхронизация этих двух копий молча возвращает баг. Оба джоба пропускаются при `USE_VAULT=false`.
 
 ## Env-переменные пользователя
 

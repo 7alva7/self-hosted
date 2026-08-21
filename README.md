@@ -139,8 +139,11 @@ different:
 - **`/pgdata`** — the embedded PostgreSQL database (accounts, your library,
   settings). Not disposable — there is nothing to re-fetch it from.
 - **`/storage`** — the embedded S3 store. Part of it is a cache (posters,
-  thumbnails) as disposable as `/data`; part of it is user-uploaded subtitles,
-  which are not disposable — nobody else has your copy.
+  thumbnails) as disposable as `/data`; part of it is user-uploaded subtitles
+  and content saved to Vault, both not disposable — nobody else has your
+  copy, and Vault exists specifically so that content outlives the torrent's
+  swarm. `/storage` grows as you save things to Vault; that growth is
+  expected, not a leak — see [Configuring Vault](#configuring-vault).
 
 Mount all three as real volumes:
 
@@ -191,6 +194,28 @@ variables:
 To use an external S3 instead of the built-in store, set `USE_LOCALS3=false`,
 `AWS_ENDPOINT` and the credentials; the bucket variables still apply and
 point at buckets on that external store (which you must create yourself).
+
+## Configuring Vault
+
+Vault saves a torrent's content permanently into the built-in S3 store, so it
+stays available for streaming and download from `/storage` even after the
+torrent's swarm has gone quiet. Use "Save to Vault" on a torrent's page, or
+open "My Vault" from your profile to see and manage what's saved.
+
+Self-hosted instances have no subscription tiers, so Vault Points are
+unlimited: there is no built-in cap on how much you can save. The real limit
+is disk space — `/storage` grows as you save torrents, and that growth is
+intended (see [Storage Layout](#storage-layout) above).
+
+- **USE_VAULT** - enable the vault service and its scheduled cleanup jobs (default: true)
+- **VAULT_PG_DATABASE** - database for Vault's own tables, separate from `PG_DATABASE` (default: vault)
+- **VAULT_AWS_BUCKET** - bucket (directory under `/storage`) Vault stores content in (default: vault)
+
+Vault keeps its schema in its own database, never `PG_DATABASE` (web-ui's).
+With the embedded PostgreSQL (`USE_LOCALPG=true`, the default) this database
+is created for you alongside the main one. With `USE_LOCALPG=false` you must
+create it yourself on your external PostgreSQL server before starting the
+container — the default name is `vault`.
 
 ## Configuring content enrichment
 
