@@ -8,7 +8,8 @@ set +a
 # Skip local PostgreSQL startup if disabled
 if [ "${USE_LOCALPG:-true}" = "false" ]; then
   echo "[postgres] USE_LOCALPG=false — skipping local PostgreSQL startup"
-  exit 0
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
 fi
 
 mkdir -p "$PGDATA_DIR"
