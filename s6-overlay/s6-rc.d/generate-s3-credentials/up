@@ -1,0 +1,1 @@
+/etc/s6-overlay/scripts/generate-s3-credentials 2>&1

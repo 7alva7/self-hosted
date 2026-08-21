@@ -1,0 +1,95 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[s3]" 1
+}
+
+if [ "${USE_LOCALS3:-true}" = "false" ]; then
+  log "USE_LOCALS3=false -- not starting the built-in S3; set AWS_ENDPOINT to your own"
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+
+mkdir -p "$STORAGE_DIR" 2>/dev/null
+
+# versitygw's posix backend keeps object metadata -- etag, content type,
+# checksums, multipart state -- in extended attributes, and exits if the
+# filesystem cannot store them. That is the case for a bind mount from macOS
+# or Windows, and for some network filesystems on Linux. Say so plainly here
+# instead of crash-looping with "xattr check failed" every second.
+#
+# Writability is checked on its own, before the xattr probe. Both failures
+# make `setfattr` fail, so folding them together would report "no extended
+# attribute support" for what is really a permissions or read-only-mount
+# problem -- sending the operator to change volume type when they need to
+# fix ownership. The two need different fixes, so they get different messages.
+probe="$STORAGE_DIR/.xattr-probe"
+# touch, not `: > "$probe"`: `:` is a POSIX special builtin, and a redirection
+# error on one is allowed to terminate the shell outright rather than yield a
+# non-zero status the `if` can catch. touch is a regular command with plain
+# exit-status semantics, so the failure is actually testable here.
+if ! touch "$probe" 2>/dev/null; then
+  log "FATAL: $STORAGE_DIR is not writable, so the S3 store cannot run."
+  log "Check the ownership and mount options of the volume mounted there"
+  log "(a read-only mount, or one owned by another uid, produces this),"
+  log "or set USE_LOCALS3=false and point AWS_ENDPOINT at an external S3."
+  exec sleep infinity
+fi
+if ! setfattr -n user.webtor -v probe "$probe" 2>/dev/null; then
+  rm -f "$probe"
+  log "FATAL: $STORAGE_DIR does not support extended attributes, which the S3 store requires."
+  log "Mount it as a named docker volume (-v storage:/storage) rather than a host directory,"
+  log "or set USE_LOCALS3=false and point AWS_ENDPOINT at an external S3."
+  exec sleep infinity
+fi
+rm -f "$probe"
+
+# A bucket is just a directory in the storage root -- versitygw's posix
+# backend returns whatever exists here from ListBuckets. Created here,
+# after the writability/xattr probes above have already established that
+# $STORAGE_DIR is usable, so a bad volume fails with the FATAL messages
+# above instead of a bare mkdir error from a separate oneshot that s6-rc
+# would then refuse to start s3 over.
+#
+# Each mkdir is checked. The probes above clear the two whole-directory
+# failure modes, but not a per-bucket one: something that is not a directory
+# occupying a bucket path. Unchecked, mkdir prints its own error straight to
+# the log stream -- without the [s3] prefix log() adds, so it does not even
+# look like this service -- and versitygw then starts and serves a bucket
+# that cannot hold an object. Fail the way the probes do instead: say what
+# is wrong, and idle rather than pretend to work.
+for b in vault posters subtitles thumbnails; do
+  if ! mkdir -p "$STORAGE_DIR/$b" 2>/dev/null; then
+    log "FATAL: cannot create the bucket directory $STORAGE_DIR/$b."
+    log "Something that is not a directory already occupies that path -- remove it,"
+    log "or set USE_LOCALS3=false and point AWS_ENDPOINT at an external S3."
+    exec sleep infinity
+  fi
+done
+
+# Storage that works but is not persistent is the one failure the probes
+# above cannot see: an operator upgrading from a release without this service
+# reuses their saved `docker run -v data:/data -v pgdata:/pgdata`, gets a
+# fully working S3 on the container's own writable layer, and loses it -- user
+# subtitles included -- the next time the container is recreated. Everything
+# looks healthy right up to that point, so say it at boot.
+if ! mountpoint -q "$STORAGE_DIR" 2>/dev/null; then
+  log "WARNING: $STORAGE_DIR is not a mounted volume, so anything stored there"
+  log "is lost when this container is recreated -- including uploaded subtitles."
+  log "Add -v storage:$STORAGE_DIR to your docker run (see README, Storage Layout)."
+fi
+
+# Credentials go through the environment, not the command line: argv is world
+# readable from `docker top` on the host and from /proc inside the container,
+# while the file they came from is 0600. versitygw reads these two names
+# itself (`versitygw --help` lists them beside --access/--secret).
+export ROOT_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+export ROOT_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+
+exec /app/versitygw \
+  --port "$S3_SERVICE_HOST:$S3_SERVICE_PORT" \
+  posix "$STORAGE_DIR" 2>&1 | s6-log p"[s3]" 1
