@@ -49,7 +49,8 @@ An assertion about a result must be a consequence of a check, not text printed b
 | `s6-overlay/s6-rc.d/nats-provision/{up,type,dependencies.d/{base,nats}}` | stream + four consumers |
 | `s6-overlay/scripts/nats-provision` | the provisioning script itself |
 | `s6-overlay/s6-rc.d/vault/{run,type,dependencies.d/{base,nats-provision,generate-s3-credentials,generate-api-key-and-secret,postgres}}` | vault longrun |
-| `s6-overlay/s6-rc.d/web-ui/{run,dependencies.d/nats-provision}` | vault wiring, blanking on `USE_VAULT=false` |
+| `s6-overlay/s6-rc.d/web-ui/{run,dependencies.d/nats-provision}` | moved to `/app/web-ui` (Task 2b); vault wiring, blanking on `USE_VAULT=false` |
+| `s6-overlay/scripts/run-cron-job` | working directory moves to `/app/web-ui` (Task 2b); vault job dispatch (Task 7) |
 | `s6-overlay/s6-rc.d/user/contents.d/{nats,nats-provision,vault}` | registration |
 | `etc/webtor/cron/crontab` | two vault jobs |
 | `tests/scenarios/80-vault.sh` | smoke scenario |
@@ -194,6 +195,135 @@ Expected: prints a version. On an arm64 host this also confirms Task 1 actually 
 ```bash
 git add Dockerfile
 git commit -m "build: add the vault binary and its migrations"
+```
+
+---
+
+## Task 2b: Move web-ui into its own directory
+
+**Files:**
+- Modify: `Dockerfile`
+- Modify: `s6-overlay/s6-rc.d/web-ui/run`
+- Modify: `s6-overlay/scripts/run-cron-job`
+- Modify: `README.md`, `CLAUDE.md`
+
+**Interfaces:**
+- Produces: `/app/web-ui/` holding the binary, `templates/`, `pub/`, `migrations/`, `assets/dist`. Later tasks that edit `web-ui/run` and `run-cron-job` must use the new working directory.
+
+Task 2 gave vault its own directory to keep it away from `/app/migrations`.
+That fixed vault; it left the cause. `/app/migrations` belongs to web-ui only
+by convention, and the next component with a `migrations/` directory walks into
+the same silent failure. Moving web-ui into `/app/web-ui/` removes the shared
+namespace instead of routing around it.
+
+Every path web-ui resolves is already relative to its working directory —
+`templates/` (`services/template/template.go`), `pub` and `./assets/dist`
+(`handlers/static/handler.go`), and `migrations` through common-services — so
+moving the directory and the `cd` together is the whole change. Nothing needs a
+new flag.
+
+- [ ] **Step 1: Confirm the paths really are all CWD-relative before moving anything**
+
+```bash
+cd /Users/vintikzzzz/Projects/webtor/web-ui
+grep -rn 'base:      "templates/"' services/template/template.go
+grep -n 'pubPath := "pub"' handlers/static/handler.go
+grep -n 'Value:  "./assets/dist"' handlers/static/handler.go
+```
+Expected: all three present. If any has become absolute, stop and report —
+the move would silently serve nothing.
+
+- [ ] **Step 2: Move the COPY destinations**
+
+In `Dockerfile`, the five web-ui lines become:
+
+```dockerfile
+COPY --from=web-ui /app/server ./web-ui/web-ui
+COPY --from=web-ui /app/templates ./web-ui/templates
+COPY --from=web-ui /app/pub ./web-ui/pub
+COPY --from=web-ui /app/migrations ./web-ui/migrations
+COPY --from=web-ui /app/assets/dist ./web-ui/assets/dist
+```
+
+- [ ] **Step 3: Move the two working directories**
+
+`s6-overlay/s6-rc.d/web-ui/run`, last line:
+
+```sh
+cd /app/web-ui && ./web-ui serve 2>&1 | s6-log p"[web-ui]" 1
+```
+
+`s6-overlay/scripts/run-cron-job`, the `cd /app || exit 1` line:
+
+```sh
+cd /app/web-ui || exit 1
+```
+
+Leave that script's exit-status handling alone — the `status_file` dance
+exists because a pipeline's status is `sed`'s, not the job's.
+
+- [ ] **Step 4: Build and verify the layout**
+
+```bash
+docker build -t webtor-self-hosted:webuimove .
+docker run --rm --entrypoint sh webtor-self-hosted:webuimove -c \
+  'ls /app/web-ui/web-ui && ls -d /app/web-ui/templates /app/web-ui/pub /app/web-ui/migrations /app/web-ui/assets/dist'
+```
+Expected: all five listed.
+
+- [ ] **Step 5: Verify the trap is gone, not merely moved**
+
+```bash
+docker run --rm --entrypoint sh webtor-self-hosted:webuimove -c 'ls /app/migrations 2>&1'
+```
+Expected: `ls: /app/migrations: No such file or directory`. That absence is the
+point of this task: a future component starting from `/app` can no longer
+discover web-ui's migrations, because there is nothing there to discover.
+
+- [ ] **Step 6: Prove the app actually works from the new directory**
+
+Layout checks do not show that web-ui serves. Run the full smoke suite, which
+exercises pages, templates, static assets, the database and the admin password:
+
+```bash
+WEBTOR_HOST_PORT=18080 tests/run.sh webtor-self-hosted:webuimove
+```
+Expected: `SUITE PASSED`. A missing `templates/` or `pub/` shows up here as
+failing page scenarios, and a missing `migrations/` as a failing DDL scenario —
+which is why this step is not optional.
+
+- [ ] **Step 7: Verify the documented recovery command against the new layout**
+
+The README publishes a password-recovery command that names the path. Run the
+new form and confirm it works:
+
+```bash
+docker rm -f wmv; docker volume rm wmvpg
+docker run -d --name wmv -v wmvpg:/pgdata webtor-self-hosted:webuimove
+sleep 40
+docker exec wmv sh -c 'set -a; . /etc/webtor/common.env; cd /app/web-ui && ./web-ui admin set-password testpass123'
+echo "exit: $?"
+docker rm -f wmv; docker volume rm wmvpg
+```
+Expected: exit 0. It must source `common.env` first — without it web-ui connects
+to Postgres with common-services' defaults (`PG_USER=webhook`,
+`PG_DATABASE=webhook`) instead of `app`/`app`.
+
+- [ ] **Step 8: Update both documents**
+
+`README.md` and `CLAUDE.md` each carry that recovery command with `cd /app`.
+Change both to `cd /app/web-ui`. Grep to be sure none is missed:
+
+```bash
+grep -rn "cd /app &&" README.md CLAUDE.md
+```
+Expected after the edit: no matches.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add Dockerfile s6-overlay/ README.md CLAUDE.md
+git commit -m "refactor: give web-ui its own directory under /app"
 ```
 
 ---
@@ -1099,7 +1229,7 @@ git commit -m "docs: describe vault and the event bus"
 
 ## Order and dependencies
 
-Task 1 is a prerequisite in the `vault` repository and blocks Task 2, which pins its output. Tasks 2–5 are strictly sequential: each builds on the artifact the previous one puts in the image. Task 6 is in the `web-ui` repository and is independent of 2–5, but its rebuilt `web-ui:cron` image is what Tasks 7–8 test against, so it lands before them. Task 7 needs vault running. Task 8 needs everything. Task 9 lands last so it describes what shipped.
+Task 1 is a prerequisite in the `vault` repository and blocks Task 2, which pins its output. Task 2b lands right after Task 2 and before Tasks 5 and 7, which edit the two files it moves — doing it later would mean writing those files twice. Tasks 2–5 are strictly sequential: each builds on the artifact the previous one puts in the image. Task 6 is in the `web-ui` repository and is independent of 2–5, but its rebuilt `web-ui:cron` image is what Tasks 7–8 test against, so it lands before them. Task 7 needs vault running. Task 8 needs everything. Task 9 lands last so it describes what shipped.
 
 ## Out of scope
 
