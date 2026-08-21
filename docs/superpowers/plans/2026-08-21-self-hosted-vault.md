@@ -457,10 +457,17 @@ Expected: the stream name matches, and the consumer listing contains exactly `we
 docker exec vn netstat -tlnp 2>/dev/null | grep 4222
 docker rm -f vnpub; docker run -d --name vnpub -p 14222:4222 webtor-self-hosted:nats
 sleep 25
-curl -sS --max-time 5 http://127.0.0.1:14222/ ; echo "curl exit: $?"
+docker run --rm --network host --entrypoint nats natsio/nats-box:latest \
+  -s nats://127.0.0.1:14222 server check connection --connect-warn=2s --connect-critical=3s
+echo "connection check exit: $?"
 docker rm -f vnpub
 ```
-Expected: `netstat` shows `127.0.0.1:4222`, not `0.0.0.0:4222`; the published-port curl fails to connect. Publishing the port and still being refused is what proves the bind address, rather than merely that nothing proxies it.
+Expected: `netstat` shows `127.0.0.1:4222`, not `0.0.0.0:4222`, and the connection check exits non-zero. Publishing the port and still failing to connect is what proves the bind address, rather than merely that nothing proxies it.
+
+Use the NATS client, not curl: NATS is not HTTP, so curl's failure says nothing
+about whether the port is reachable — through Docker's userland proxy it can
+return "empty reply" for a live socket and "connection refused" for a dead one,
+codes too close together to rest an assertion on.
 
 - [ ] **Step 9: Verify idempotency across a restart**
 
@@ -480,10 +487,16 @@ Prove `fail` is reachable and that the oneshot does not report success on a brok
 docker rm -f vnneg
 docker run -d --name vnneg --entrypoint sh webtor-self-hosted:nats -c \
   'mv /app/nats-server /app/nats-server.hidden; exec /init'
-sleep 40
+sleep 100
 docker logs vnneg 2>&1 | grep "\[nats-provision\] FATAL" | head -2
 docker rm -f vnneg
 ```
+
+The wait is 100 seconds, not the ~30 the other steps use, because the script
+retries the connection for 60 seconds before giving up. Checking sooner finds no
+FATAL line yet and reads as "the guard does not work" — which would send you off
+fixing code that is fine.
+
 Expected: the FATAL line appears. With the broker absent, provisioning cannot succeed, and this confirms that state is reported rather than passed over silently.
 
 - [ ] **Step 11: Clean up and commit**
