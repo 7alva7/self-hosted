@@ -17,7 +17,15 @@
 # The second is that some jobs are pointless without optional configuration,
 # and a job that errors every morning teaches its operator to ignore the log.
 #
-# Usage: run-cron-job <name> <web-ui subcommand...>
+# Most jobs are web-ui subcommands and run against /app/web-ui/web-ui, but
+# vault-gc-unused runs the vault binary's own "gc" subcommand from
+# /app/vault -- common-services looks up migrations at the CWD-relative path
+# "migrations", so the wrong directory means the wrong (or missing)
+# migrations table. Dispatch on the job name below picks the binary and
+# working directory; everything else about the wrapper stays the same for
+# both.
+#
+# Usage: run-cron-job <name> <subcommand...>
 
 set -a
 . /etc/webtor/common.env
@@ -38,15 +46,50 @@ if [ "$name" = "notification-send" ] && [ -z "${SMTP_HOST:-}" ]; then
   exit 0
 fi
 
+# Both vault jobs are pointless when the vault service itself is idled.
+case "$name" in
+  vault-reap | vault-gc-unused)
+    if [ "${USE_VAULT:-true}" = "false" ]; then
+      log "USE_VAULT=false -- skipping"
+      exit 0
+    fi
+    ;;
+esac
+
+# vault-gc-unused invokes the vault binary's own "gc" subcommand, not
+# web-ui's; the crontab entry passes it as "vault gc" to mirror the
+# production CronJob name, so drop the leading "vault" token before handing
+# the rest to the vault binary.
+if [ "$name" = "vault-gc-unused" ]; then
+  bin_dir=/app/vault
+  bin=./vault
+  shift
+  # Mirror s6-rc.d/vault/run's env remapping: common.env's generic PG_DATABASE
+  # is web-ui's ("app"), so gc would otherwise run its "no resource_file
+  # references this file" sweep against web-ui's database instead of vault's,
+  # applying vault's migrations there and finding nothing to collect. gc also
+  # needs S3 credentials -- unlike reap, which only calls vault's unauthenticated
+  # internal HTTP API and touches no bucket -- so source the secret common.env
+  # deliberately excludes from the top-of-file sourcing above.
+  set -a
+  [ -f /etc/webtor/secrets/s3.env ] && . /etc/webtor/secrets/s3.env
+  PG_DATABASE=$VAULT_PG_DATABASE
+  AWS_BUCKET=$VAULT_AWS_BUCKET
+  set +a
+else
+  bin_dir=/app/web-ui
+  bin=./web-ui
+fi
+
 log "starting: $*"
-cd /app/web-ui || exit 1
+cd "$bin_dir" || exit 1
 
 # The prefixing pipe cannot be in the success test: a pipeline reports the
 # status of its LAST command, so `web-ui ... | sed` returns sed's zero and a
 # job that panicked would be logged as finished. Capture the real status
 # through a fifo-free redirect instead, and report on that.
 status_file="$(mktemp)"
-{ ./web-ui "$@" 2>&1; echo "$?" > "$status_file"; } | sed "s/^/[cron:${name}] /"
+{ "$bin" "$@" 2>&1; echo "$?" > "$status_file"; } | sed "s/^/[cron:${name}] /"
 status="$(cat "$status_file")"
 rm -f "$status_file"
 
