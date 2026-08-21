@@ -39,7 +39,7 @@ if [ "$name" = "notification-send" ] && [ -z "${SMTP_HOST:-}" ]; then
 fi
 
 log "starting: $*"
-cd /app || exit 1
+cd /app/web-ui || exit 1
 
 # The prefixing pipe cannot be in the success test: a pipeline reports the
 # status of its LAST command, so `web-ui ... | sed` returns sed's zero and a

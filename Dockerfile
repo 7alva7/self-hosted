@@ -69,11 +69,11 @@ COPY --from=rest-api /server ./rest-api
 COPY --from=versitygw /usr/local/bin/versitygw ./versitygw
 COPY --from=content-transcoder /app/server ./content-transcoder
 COPY --from=content-transcoder /app/player ./player
-COPY --from=web-ui /app/server ./web-ui
-COPY --from=web-ui /app/templates ./templates
-COPY --from=web-ui /app/pub ./pub
-COPY --from=web-ui /app/migrations ./migrations
-COPY --from=web-ui /app/assets/dist ./assets/dist
+COPY --from=web-ui /app/server ./web-ui/web-ui
+COPY --from=web-ui /app/templates ./web-ui/templates
+COPY --from=web-ui /app/pub ./web-ui/pub
+COPY --from=web-ui /app/migrations ./web-ui/migrations
+COPY --from=web-ui /app/assets/dist ./web-ui/assets/dist
 COPY --from=nginx-vod /usr/local/nginx /usr/local/nginx
 
 # Vault gets its own working directory, not /app, because common-services

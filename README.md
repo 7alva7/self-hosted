@@ -52,7 +52,7 @@ so a bare invocation connects to Postgres with the wrong defaults
 `app`/`app` role the embedded database actually created:
 
 ```bash
-docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app && ./web-ui admin set-password <new-password>'
+docker exec webtor sh -c 'set -a; . /etc/webtor/common.env; cd /app/web-ui && ./web-ui admin set-password <new-password>'
 ```
 
 Once a password is set, the web interface requires authentication for every

@@ -10,4 +10,4 @@ TORRENT_HTTP_PROXY_SERVICE_PORT=$WEB_PORT
 TORRENT_HTTP_PROXY_SERVICE_HOST=127.0.0.1
 WEB_PORT=$WEB_UI_SERVICE_PORT
 set +a
-cd /app && ./web-ui serve 2>&1 | s6-log p"[web-ui]" 1
+cd /app/web-ui && ./web-ui serve 2>&1 | s6-log p"[web-ui]" 1
