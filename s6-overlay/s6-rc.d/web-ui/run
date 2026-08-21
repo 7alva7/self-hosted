@@ -9,5 +9,15 @@ WEBTOR_API_SECRET=$API_SECRET
 TORRENT_HTTP_PROXY_SERVICE_PORT=$WEB_PORT
 TORRENT_HTTP_PROXY_SERVICE_HOST=127.0.0.1
 WEB_PORT=$WEB_UI_SERVICE_PORT
+# web-ui keys its vault degradation off an empty VAULT_SERVICE_HOST:
+# vault.NewApi returns nil, the /vault routes are never registered, and the
+# page-level CTAs disappear. common.env sets the host unconditionally --
+# envsubst has no conditionals -- so blank it here when the store is off.
+# Leaving it set would point web-ui at a sleeping service: the UI would
+# render and every vault page would fail against a dead endpoint instead of
+# degrading.
+if [ "${USE_VAULT:-true}" = "false" ]; then
+  VAULT_SERVICE_HOST=
+fi
 set +a
 cd /app/web-ui && ./web-ui serve 2>&1 | s6-log p"[web-ui]" 1

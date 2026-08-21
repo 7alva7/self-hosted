@@ -1,0 +1,37 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/api.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[vault]" 1
+}
+
+if [ "${USE_VAULT:-true}" = "false" ]; then
+  log "USE_VAULT=false -- not starting vault; web-ui will hide the vault UI"
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+
+set -a
+WEB_PORT=$VAULT_SERVICE_PORT
+PG_DATABASE=$VAULT_PG_DATABASE
+AWS_BUCKET=$VAULT_AWS_BUCKET
+WEBTOR_API_KEY=$API_KEY
+WEBTOR_API_SECRET=$API_SECRET
+# rest-api hands out export URLs built from DOMAIN, which names how the
+# instance is reached from outside -- a host port, or a public name that does
+# not resolve in here. This makes vault rewrite the host of every content URL
+# to the in-container proxy before fetching. Without it the worker fetches
+# from an address that does not exist inside the container and nothing is ever
+# stored, while the service itself looks healthy.
+USE_INTERNAL_TORRENT_HTTP_PROXY=true
+set +a
+
+# cd into vault's own directory, not /app. common-services discovers
+# migrations at the CWD-relative path "migrations", and /app/migrations is
+# web-ui's. Started from /app, vault would apply web-ui's 69 migrations to
+# vault's database.
+cd /app/vault && ./vault serve 2>&1 | s6-log p"[vault]" 1
