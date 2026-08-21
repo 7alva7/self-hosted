@@ -1143,6 +1143,25 @@ fi
 stored="$(webtor_exec sh -c 'find /storage/vault -type f | head -1' </dev/null | tr -d '\r')"
 [ -n "$stored" ] || fail "pledge reports vaulted but /storage/vault holds no files"
 
+# 6. Running the cron jobs must not touch web-ui's database. The wrapper
+# sources common.env, where PG_DATABASE names web-ui's database, so the gc
+# branch has to override it -- and a naive dispatch already ran gc against
+# web-ui's database once during implementation, applying vault's migrations
+# there and then sweeping nothing forever. That override now exists in two
+# places (the wrapper and s6-rc.d/vault/run), so a rename in one and not the
+# other silently restores the bug. This is what would notice.
+before="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
+webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-reap vault reap </dev/null >/dev/null \
+  || fail "cron job vault-reap failed"
+webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-gc-unused vault gc </dev/null >/dev/null \
+  || fail "cron job vault-gc-unused failed"
+
+after="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
+assert_eq "$after" "$before" "running the vault cron jobs changed web-ui's migration version -- gc ran against the wrong database"
+
+leaked_after="$(psql_db app "SELECT count(*) FROM pg_tables WHERE tablename IN ('file','resource_file')")"
+assert_eq "$leaked_after" "0" "running the vault cron jobs created vault's tables in web-ui's database"
+
 echo "PASS: vault"
 ```
 
