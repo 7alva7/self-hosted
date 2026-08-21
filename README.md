@@ -171,7 +171,11 @@ By default Webtor runs an embedded S3-compatible store (versitygw over a local
 directory, see [Storage Layout](#storage-layout) above for the volume
 requirements) for the poster cache, user-uploaded subtitles and thumbnails.
 Credentials are generated on first boot and persisted, so they survive
-container restarts. You can configure it using the following environment
+container restarts. They live on the container's own filesystem, not in a
+volume, so replacing the container — an image upgrade, for instance — mints a
+new pair. Stored objects stay readable, but anything outside the instance that
+held the old key needs the new one. Set `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` yourself to pin them across upgrades. You can configure it using the following environment
 variables:
 
 - **USE_LOCALS3** - use the built-in S3 store (default: true)

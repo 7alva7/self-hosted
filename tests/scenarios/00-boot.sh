@@ -60,7 +60,8 @@ esac
 # The expected set is derived from s6-overlay/s6-rc.d/user/contents.d/ (the
 # "user" bundle -- what gets started at boot) rather than hardcoded, so
 # adding a service to the image automatically extends this check. Oneshots
-# (currently just generate-api-key-and-secret) run once to completion and
+# (generate-api-key-and-secret, generate-session-secret and
+# generate-s3-credentials) run once to completion and
 # are never supervised in /run/service, so they're excluded -- there's
 # nothing to poll "up" for.
 S6_RC_DIR="$REPO_ROOT/s6-overlay/s6-rc.d"

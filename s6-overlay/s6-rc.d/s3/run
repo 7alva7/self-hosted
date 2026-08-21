@@ -71,8 +71,25 @@ for b in vault posters subtitles thumbnails; do
   fi
 done
 
+# Storage that works but is not persistent is the one failure the probes
+# above cannot see: an operator upgrading from a release without this service
+# reuses their saved `docker run -v data:/data -v pgdata:/pgdata`, gets a
+# fully working S3 on the container's own writable layer, and loses it -- user
+# subtitles included -- the next time the container is recreated. Everything
+# looks healthy right up to that point, so say it at boot.
+if ! mountpoint -q "$STORAGE_DIR" 2>/dev/null; then
+  log "WARNING: $STORAGE_DIR is not a mounted volume, so anything stored there"
+  log "is lost when this container is recreated -- including uploaded subtitles."
+  log "Add -v storage:$STORAGE_DIR to your docker run (see README, Storage Layout)."
+fi
+
+# Credentials go through the environment, not the command line: argv is world
+# readable from `docker top` on the host and from /proc inside the container,
+# while the file they came from is 0600. versitygw reads these two names
+# itself (`versitygw --help` lists them beside --access/--secret).
+export ROOT_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID"
+export ROOT_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY"
+
 exec /app/versitygw \
   --port "$S3_SERVICE_HOST:$S3_SERVICE_PORT" \
-  --access "$AWS_ACCESS_KEY_ID" \
-  --secret "$AWS_SECRET_ACCESS_KEY" \
   posix "$STORAGE_DIR" 2>&1 | s6-log p"[s3]" 1
