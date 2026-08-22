@@ -1,0 +1,29 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+set +a
+
+# Provision the stream and its four durable consumers in the background, on
+# every start of this service -- not just the first. JetStream here is
+# memory-backed (see below), so a broker that restarts on its own (crash,
+# OOM kill) comes back with an empty stream and no consumers; without this,
+# nats-provision -- a oneshot that has already run once -- would never run
+# again, and vault/web-ui would keep fetching from durable consumers that no
+# longer exist. Same shape as s6-rc.d/postgres/run's own background
+# initializer: start the server, then bring the rest of the state up to
+# date from a backgrounded subshell/script instead of blocking the exec
+# below on it.
+/etc/s6-overlay/scripts/nats-create-stream &
+
+# JetStream with memory-backed streams. The one live subject is
+# resource.vaulted, published and consumed inside this container, so the
+# delivery window is milliseconds; only a full container restart can drop an
+# event. Memory storage keeps the operator's docker run line unchanged, and
+# there is nowhere good to put a file store: $STORAGE_DIR turns directories
+# into S3 buckets, $DATA_DIR is swept by the autocleaner, and $PGDATA_DIR is
+# the database's. The server still writes its own JetStream metadata under
+# /tmp, which is what we want -- ephemeral.
+exec /app/nats-server \
+  --addr "$NATS_SERVICE_HOST" \
+  --port "$NATS_SERVICE_PORT" \
+  --jetstream 2>&1 | s6-log p"[nats]" 1

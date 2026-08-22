@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-21-self-hosted-vault-design.md`
 
+**Note (added after implementation, 2026-08-21):** several passages below state that a vault started from `/app` "would apply web-ui's 69 migrations" to vault's database. That was accurate when this plan was written, but this same plan's Step 6 ("Prove the app actually works from the new directory") later gives web-ui its own directory under `/app/web-ui` -- so by the time vault's own steps run, `/app/migrations` belongs to no one. A wrong-CWD vault now silently discovers zero migrations and creates none of its own tables, rather than colliding with web-ui's schema. The task list and the working-directory guard it describes are unchanged; only the failure that guard prevents is different. See `CLAUDE.md`'s Vault section for the current mechanism.
+
 ## Global Constraints
 
 - Every variable added to `etc/webtor/common.template.env` uses the `${VAR:-default}` form, so `docker run -e` can override it. Exception, matching every other internal service: `*_SERVICE_HOST`/`*_SERVICE_PORT` are fixed at loopback and are deliberately **not** overridable.
@@ -49,7 +51,8 @@ An assertion about a result must be a consequence of a check, not text printed b
 | `s6-overlay/s6-rc.d/nats-provision/{up,type,dependencies.d/{base,nats}}` | stream + four consumers |
 | `s6-overlay/scripts/nats-provision` | the provisioning script itself |
 | `s6-overlay/s6-rc.d/vault/{run,type,dependencies.d/{base,nats-provision,generate-s3-credentials,generate-api-key-and-secret,postgres}}` | vault longrun |
-| `s6-overlay/s6-rc.d/web-ui/{run,dependencies.d/nats-provision}` | vault wiring, blanking on `USE_VAULT=false` |
+| `s6-overlay/s6-rc.d/web-ui/{run,dependencies.d/nats-provision}` | moved to `/app/web-ui` (Task 2b); vault wiring, blanking on `USE_VAULT=false` |
+| `s6-overlay/scripts/run-cron-job` | working directory moves to `/app/web-ui` (Task 2b); vault job dispatch (Task 7) |
 | `s6-overlay/s6-rc.d/user/contents.d/{nats,nats-provision,vault}` | registration |
 | `etc/webtor/cron/crontab` | two vault jobs |
 | `tests/scenarios/80-vault.sh` | smoke scenario |
@@ -194,6 +197,135 @@ Expected: prints a version. On an arm64 host this also confirms Task 1 actually 
 ```bash
 git add Dockerfile
 git commit -m "build: add the vault binary and its migrations"
+```
+
+---
+
+## Task 2b: Move web-ui into its own directory
+
+**Files:**
+- Modify: `Dockerfile`
+- Modify: `s6-overlay/s6-rc.d/web-ui/run`
+- Modify: `s6-overlay/scripts/run-cron-job`
+- Modify: `README.md`, `CLAUDE.md`
+
+**Interfaces:**
+- Produces: `/app/web-ui/` holding the binary, `templates/`, `pub/`, `migrations/`, `assets/dist`. Later tasks that edit `web-ui/run` and `run-cron-job` must use the new working directory.
+
+Task 2 gave vault its own directory to keep it away from `/app/migrations`.
+That fixed vault; it left the cause. `/app/migrations` belongs to web-ui only
+by convention, and the next component with a `migrations/` directory walks into
+the same silent failure. Moving web-ui into `/app/web-ui/` removes the shared
+namespace instead of routing around it.
+
+Every path web-ui resolves is already relative to its working directory —
+`templates/` (`services/template/template.go`), `pub` and `./assets/dist`
+(`handlers/static/handler.go`), and `migrations` through common-services — so
+moving the directory and the `cd` together is the whole change. Nothing needs a
+new flag.
+
+- [ ] **Step 1: Confirm the paths really are all CWD-relative before moving anything**
+
+```bash
+cd /Users/vintikzzzz/Projects/webtor/web-ui
+grep -rn 'base:      "templates/"' services/template/template.go
+grep -n 'pubPath := "pub"' handlers/static/handler.go
+grep -n 'Value:  "./assets/dist"' handlers/static/handler.go
+```
+Expected: all three present. If any has become absolute, stop and report —
+the move would silently serve nothing.
+
+- [ ] **Step 2: Move the COPY destinations**
+
+In `Dockerfile`, the five web-ui lines become:
+
+```dockerfile
+COPY --from=web-ui /app/server ./web-ui/web-ui
+COPY --from=web-ui /app/templates ./web-ui/templates
+COPY --from=web-ui /app/pub ./web-ui/pub
+COPY --from=web-ui /app/migrations ./web-ui/migrations
+COPY --from=web-ui /app/assets/dist ./web-ui/assets/dist
+```
+
+- [ ] **Step 3: Move the two working directories**
+
+`s6-overlay/s6-rc.d/web-ui/run`, last line:
+
+```sh
+cd /app/web-ui && ./web-ui serve 2>&1 | s6-log p"[web-ui]" 1
+```
+
+`s6-overlay/scripts/run-cron-job`, the `cd /app || exit 1` line:
+
+```sh
+cd /app/web-ui || exit 1
+```
+
+Leave that script's exit-status handling alone — the `status_file` dance
+exists because a pipeline's status is `sed`'s, not the job's.
+
+- [ ] **Step 4: Build and verify the layout**
+
+```bash
+docker build -t webtor-self-hosted:webuimove .
+docker run --rm --entrypoint sh webtor-self-hosted:webuimove -c \
+  'ls /app/web-ui/web-ui && ls -d /app/web-ui/templates /app/web-ui/pub /app/web-ui/migrations /app/web-ui/assets/dist'
+```
+Expected: all five listed.
+
+- [ ] **Step 5: Verify the trap is gone, not merely moved**
+
+```bash
+docker run --rm --entrypoint sh webtor-self-hosted:webuimove -c 'ls /app/migrations 2>&1'
+```
+Expected: `ls: /app/migrations: No such file or directory`. That absence is the
+point of this task: a future component starting from `/app` can no longer
+discover web-ui's migrations, because there is nothing there to discover.
+
+- [ ] **Step 6: Prove the app actually works from the new directory**
+
+Layout checks do not show that web-ui serves. Run the full smoke suite, which
+exercises pages, templates, static assets, the database and the admin password:
+
+```bash
+WEBTOR_HOST_PORT=18080 tests/run.sh webtor-self-hosted:webuimove
+```
+Expected: `SUITE PASSED`. A missing `templates/` or `pub/` shows up here as
+failing page scenarios, and a missing `migrations/` as a failing DDL scenario —
+which is why this step is not optional.
+
+- [ ] **Step 7: Verify the documented recovery command against the new layout**
+
+The README publishes a password-recovery command that names the path. Run the
+new form and confirm it works:
+
+```bash
+docker rm -f wmv; docker volume rm wmvpg
+docker run -d --name wmv -v wmvpg:/pgdata webtor-self-hosted:webuimove
+sleep 40
+docker exec wmv sh -c 'set -a; . /etc/webtor/common.env; cd /app/web-ui && ./web-ui admin set-password testpass123'
+echo "exit: $?"
+docker rm -f wmv; docker volume rm wmvpg
+```
+Expected: exit 0. It must source `common.env` first — without it web-ui connects
+to Postgres with common-services' defaults (`PG_USER=webhook`,
+`PG_DATABASE=webhook`) instead of `app`/`app`.
+
+- [ ] **Step 8: Update both documents**
+
+`README.md` and `CLAUDE.md` each carry that recovery command with `cd /app`.
+Change both to `cd /app/web-ui`. Grep to be sure none is missed:
+
+```bash
+grep -rn "cd /app &&" README.md CLAUDE.md
+```
+Expected after the edit: no matches.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add Dockerfile s6-overlay/ README.md CLAUDE.md
+git commit -m "refactor: give web-ui its own directory under /app"
 ```
 
 ---
@@ -457,10 +589,17 @@ Expected: the stream name matches, and the consumer listing contains exactly `we
 docker exec vn netstat -tlnp 2>/dev/null | grep 4222
 docker rm -f vnpub; docker run -d --name vnpub -p 14222:4222 webtor-self-hosted:nats
 sleep 25
-curl -sS --max-time 5 http://127.0.0.1:14222/ ; echo "curl exit: $?"
+docker run --rm --network host --entrypoint nats natsio/nats-box:latest \
+  -s nats://127.0.0.1:14222 server check connection --connect-warn=2s --connect-critical=3s
+echo "connection check exit: $?"
 docker rm -f vnpub
 ```
-Expected: `netstat` shows `127.0.0.1:4222`, not `0.0.0.0:4222`; the published-port curl fails to connect. Publishing the port and still being refused is what proves the bind address, rather than merely that nothing proxies it.
+Expected: `netstat` shows `127.0.0.1:4222`, not `0.0.0.0:4222`, and the connection check exits non-zero. Publishing the port and still failing to connect is what proves the bind address, rather than merely that nothing proxies it.
+
+Use the NATS client, not curl: NATS is not HTTP, so curl's failure says nothing
+about whether the port is reachable — through Docker's userland proxy it can
+return "empty reply" for a live socket and "connection refused" for a dead one,
+codes too close together to rest an assertion on.
 
 - [ ] **Step 9: Verify idempotency across a restart**
 
@@ -480,10 +619,16 @@ Prove `fail` is reachable and that the oneshot does not report success on a brok
 docker rm -f vnneg
 docker run -d --name vnneg --entrypoint sh webtor-self-hosted:nats -c \
   'mv /app/nats-server /app/nats-server.hidden; exec /init'
-sleep 40
+sleep 100
 docker logs vnneg 2>&1 | grep "\[nats-provision\] FATAL" | head -2
 docker rm -f vnneg
 ```
+
+The wait is 100 seconds, not the ~30 the other steps use, because the script
+retries the connection for 60 seconds before giving up. Checking sooner finds no
+FATAL line yet and reads as "the guard does not work" — which would send you off
+fixing code that is fine.
+
 Expected: the FATAL line appears. With the broker absent, provisioning cannot succeed, and this confirms that state is reported rather than passed over silently.
 
 - [ ] **Step 11: Clean up and commit**
@@ -649,11 +794,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18081/vault
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18081/
 docker inspect -f 'RestartCount={{.RestartCount}}' vvoff
 ```
-Expected: the log line is present; no vault process; nothing on 8100; `/vault` returns 404 (routes not registered, which proves the blanked host reached web-ui); the front page still returns 200; RestartCount 0.
+Expected: the log line is present; no vault process; nothing on 8100; the front page still returns 200; RestartCount 0. `/vault` answers with web-ui's generic not-found handling — a 302 to `/?err=error.invalid_resource...`, byte-for-byte what any nonexistent path returns, not a bare 404. Compare it against a path you know does not exist rather than asserting a status code: the claim being tested is that the routes were never registered.
 
 - [ ] **Step 8: Negative control on the blanking**
 
-Remove the three-line `if` added in Step 3, rebuild, and re-run Step 7. Expected: `/vault` no longer returns 404 — web-ui registers the routes and points at a sleeping service. Restore the guard and confirm 404 returns. Report both directions verbatim.
+Remove the three-line `if` added in Step 3, rebuild, and re-run Step 7. Expected: `/vault` answers 200 — web-ui registers the routes and points at a sleeping service. Restore the guard and confirm the not-found response returns. Report both directions verbatim.
 
 - [ ] **Step 9: Clean up and commit**
 
@@ -1000,6 +1145,25 @@ fi
 stored="$(webtor_exec sh -c 'find /storage/vault -type f | head -1' </dev/null | tr -d '\r')"
 [ -n "$stored" ] || fail "pledge reports vaulted but /storage/vault holds no files"
 
+# 6. Running the cron jobs must not touch web-ui's database. The wrapper
+# sources common.env, where PG_DATABASE names web-ui's database, so the gc
+# branch has to override it -- and a naive dispatch already ran gc against
+# web-ui's database once during implementation, applying vault's migrations
+# there and then sweeping nothing forever. That override now exists in two
+# places (the wrapper and s6-rc.d/vault/run), so a rename in one and not the
+# other silently restores the bug. This is what would notice.
+before="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
+webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-reap vault reap </dev/null >/dev/null \
+  || fail "cron job vault-reap failed"
+webtor_exec /etc/s6-overlay/scripts/run-cron-job vault-gc-unused vault gc </dev/null >/dev/null \
+  || fail "cron job vault-gc-unused failed"
+
+after="$(psql_db app "SELECT max(version) FROM gopg_migrations")"
+assert_eq "$after" "$before" "running the vault cron jobs changed web-ui's migration version -- gc ran against the wrong database"
+
+leaked_after="$(psql_db app "SELECT count(*) FROM pg_tables WHERE tablename IN ('file','resource_file')")"
+assert_eq "$leaked_after" "0" "running the vault cron jobs created vault's tables in web-ui's database"
+
 echo "PASS: vault"
 ```
 
@@ -1049,6 +1213,88 @@ git commit -m "test: cover vault end to end, including the vaulted event"
 
 ---
 
+## Task 8b: Publish the vault path-prefix fix and pin it
+
+**Repository:** the fix is in `/Users/vintikzzzz/Projects/webtor/vault`; the pin
+is in this repo's `Dockerfile`.
+
+**Files:**
+- Modify: `vault` repo — `services/api.go` (the patch already exists, uncommitted)
+- Modify: `Dockerfile` (the vault stage's digest)
+
+**Interfaces:**
+- Produces: a published vault image whose internal-proxy path handling works,
+  and its new digest.
+
+Task 8 found that vault stores nothing in this image. rest-api bakes
+`EXPORT_PATH_PREFIX=/torrent-http-proxy/` into every export URL, because
+nginx fronts all services on one port and routes them by path. nginx strips
+that prefix when proxying (`proxy_pass http://remote/;`), so
+torrent-http-proxy has never seen it and expects the infohash as the first
+path segment. Vault, going internal, rewrote only the host and kept the
+path — so every fetch went to a path torrent-http-proxy cannot parse, and
+every pledge hung at `vaulted=false` forever with the only trace in vault's
+own log.
+
+The fix adds `TORRENT_HTTP_PROXY_PATH_PREFIX`, empty by default, and strips
+it only when set. Production does not set it — and explicitly does not enable
+`USE_INTERNAL_TORRENT_HTTP_PROXY` at all (`values/rest-api.yaml.gotmpl`
+carries a comment saying why) — so this is a no-op there.
+
+- [ ] **Step 1: Apply and review the patch**
+
+The patch is at
+`.superpowers/sdd/2026-08-21-self-hosted-vault/vault-torrent-http-proxy-path-prefix.patch`.
+Apply it in the vault repo and read the result. Confirm the stripping is
+conditional on a non-empty prefix, so an unset variable changes nothing.
+
+- [ ] **Step 2: Prove the stripping logic in isolation before publishing**
+
+Write a Go test in the vault repo covering `makeTorrentHTTPProxyRequest`:
+prefix set and URL carrying it (stripped), prefix set and URL not carrying it
+(unchanged), prefix empty (unchanged). Run it, then delete the stripping
+branch and confirm the first case fails. Report both directions. Publishing
+an unproven fix to a production repository is what this step prevents.
+
+- [ ] **Step 3: Commit and push**
+
+```bash
+git add services/api.go services/api_test.go
+git commit -m "fix: strip the edge path prefix when fetching through the internal proxy"
+git push
+```
+
+- [ ] **Step 4: Wait for the build and record the digest**
+
+```bash
+gh run watch
+docker buildx imagetools inspect ghcr.io/webtor-io/vault:main | grep -E "^Digest|Platform"
+```
+Expected: both `linux/amd64` and `linux/arm64`, and a digest different from
+`sha256:8dd99dfccd796360183b14a944296442f0c01ee5fb01e8e1d1f0f6a1a6744fea`.
+
+- [ ] **Step 5: Pin it**
+
+Replace the digest on the vault `FROM` line in this repo's `Dockerfile`.
+
+- [ ] **Step 6: Run the suite against the published image**
+
+```bash
+WEBTOR_HOST_PORT=18080 tests/run.sh <tag>
+```
+Expected: `SUITE PASSED` including `PASS: vault`. This is the run that matters:
+until now the scenario has only passed against a locally patched image, so the
+feature was unproven on anything anyone could actually pull.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add Dockerfile
+git commit -m "build: pin the vault image carrying the path-prefix fix"
+```
+
+---
+
 ## Task 9: Documentation
 
 **Files:**
@@ -1086,7 +1332,7 @@ git commit -m "docs: describe vault and the event bus"
 
 ## Order and dependencies
 
-Task 1 is a prerequisite in the `vault` repository and blocks Task 2, which pins its output. Tasks 2–5 are strictly sequential: each builds on the artifact the previous one puts in the image. Task 6 is in the `web-ui` repository and is independent of 2–5, but its rebuilt `web-ui:cron` image is what Tasks 7–8 test against, so it lands before them. Task 7 needs vault running. Task 8 needs everything. Task 9 lands last so it describes what shipped.
+Task 1 is a prerequisite in the `vault` repository and blocks Task 2, which pins its output. Task 2b lands right after Task 2 and before Tasks 5 and 7, which edit the two files it moves — doing it later would mean writing those files twice. Tasks 2–5 are strictly sequential: each builds on the artifact the previous one puts in the image. Task 6 is in the `web-ui` repository and is independent of 2–5, but its rebuilt `web-ui:cron` image is what Tasks 7–8 test against, so it lands before them. Task 7 needs vault running. Task 8 needs everything. Task 9 lands last so it describes what shipped.
 
 ## Out of scope
 

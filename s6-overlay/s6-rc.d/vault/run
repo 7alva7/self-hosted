@@ -1,0 +1,53 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/api.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[vault]" 1
+}
+
+if [ "${USE_VAULT:-true}" = "false" ]; then
+  log "USE_VAULT=false -- not starting vault; web-ui will hide the vault UI"
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+
+set -a
+WEB_HOST=$VAULT_SERVICE_HOST
+WEB_PORT=$VAULT_SERVICE_PORT
+PG_DATABASE=$VAULT_PG_DATABASE
+AWS_BUCKET=$VAULT_AWS_BUCKET
+WEBTOR_API_KEY=$API_KEY
+WEBTOR_API_SECRET=$API_SECRET
+# rest-api hands out export URLs built from DOMAIN, which names how the
+# instance is reached from outside -- a host port, or a public name that does
+# not resolve in here. This makes vault rewrite the host of every content URL
+# to the in-container proxy before fetching. Without it the worker fetches
+# from an address that does not exist inside the container and nothing is ever
+# stored, while the service itself looks healthy.
+USE_INTERNAL_TORRENT_HTTP_PROXY=true
+# rest-api's own run script sets EXPORT_PATH_PREFIX=/torrent-http-proxy/ so
+# nginx (the single entrypoint on 8080) can route exported URLs to
+# torrent-http-proxy by path instead of by subdomain -- nginx strips that
+# prefix before proxying. torrent-http-proxy's own router has no notion of
+# it: hit directly (as the internal rewrite above does, bypassing nginx),
+# the prefix must be stripped here instead, or every fetch 404s/500s on a
+# path torrent-http-proxy cannot parse while the service still reports
+# healthy. Keep this in sync with rest-api/run's EXPORT_PATH_PREFIX.
+TORRENT_HTTP_PROXY_PATH_PREFIX=/torrent-http-proxy/
+set +a
+
+# cd into vault's own directory, not /app. common-services discovers
+# migrations at the CWD-relative path "migrations", and /app/migrations does
+# not exist for anyone now that web-ui has its own directory (see
+# Dockerfile). Started from /app, vault would silently discover zero
+# migrations and never create its own tables -- not web-ui's schema
+# colliding with it, just vault's own schema never showing up. (Before the
+# web-ui move, /app/migrations really was web-ui's, and a wrong-CWD vault
+# would have applied web-ui's 69 migrations instead of its own 8 -- that was
+# the original failure this cd guarded against; the guard still matters,
+# only the failure it prevents changed.)
+cd /app/vault && ./vault serve 2>&1 | s6-log p"[vault]" 1

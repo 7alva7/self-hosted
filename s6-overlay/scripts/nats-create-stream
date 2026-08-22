@@ -1,0 +1,99 @@
+#!/bin/sh
+# Creates the 'common' JetStream stream and its four durable consumers.
+#
+# Deliberately a plain /bin/sh script rather than #!/command/with-contenv
+# sh: with-contenv is an execline program that needs s6's own PATH, which a
+# background job started from another run script -- or an operator running
+# `docker exec <container> /etc/s6-overlay/scripts/nats-create-stream` by
+# hand to recover a broker that came back empty -- does not reliably have.
+# It is not needed anyway, because sourcing the service environment is
+# precisely what this script does next. (s6-overlay/scripts/run-cron-job's
+# own header documents this exact trap for the same reason.)
+#
+# For the same reason, log() below does not pipe through s6-log either:
+# s6-log lives at /command/s6-log, and /command is only on PATH inside the
+# with-contenv environment that s6-supervise sets up for run scripts -- a
+# plain `docker exec` shell does not have it, so a call to s6-log would fail
+# exactly like with-contenv itself would (exit 127). Plain echo with a
+# manual prefix, the same fix run-cron-job uses, works in both places: its
+# output still reaches `docker logs` when this runs backgrounded from
+# nats/run (stdout is inherited straight through to the container's own),
+# and it does not depend on a binary docker exec's PATH cannot find.
+#
+# Invoked two ways:
+#  - by s6-rc.d/nats/run, backgrounded right after starting the broker, on
+#    every start of nats -- so a broker that restarts on its own (crash,
+#    OOM kill) re-creates its own memory-backed, now-empty stream and
+#    consumers without any other process needing to notice or act
+#  - by an operator by hand, the same command, against a live broker that
+#    somehow came back empty without the container restarting
+#
+# This is now the ONLY thing that ever creates these objects.
+# s6-overlay/scripts/nats-provision -- the oneshot vault and web-ui order
+# themselves after -- no longer creates anything, only waits for what this
+# script creates (see its own header). One creator, one waiter: nothing else
+# can race this script to create the same stream or consumer at once.
+
+set -a
+. /etc/webtor/common.env
+set +a
+
+log() {
+  echo "[nats-create-stream] $1"
+}
+
+url="nats://$NATS_SERVICE_HOST:$NATS_SERVICE_PORT"
+
+# Wait for the broker. Called right after nats-server is started in the
+# background, which only guarantees the process exists, not that it is
+# accepting connections yet.
+i=0
+while [ "$i" -lt 60 ]; do
+  if /app/nats -s "$url" server check connection >/dev/null 2>&1; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+fail() {
+  log "FATAL: $1"
+  exit 1
+}
+
+# JetStream returns the existing object when the requested configuration is
+# identical, so re-running this on every broker start is a no-op except on
+# the restart that actually needs it. A genuine conflict -- same name,
+# different configuration -- exits non-zero and is reported.
+/app/nats -s "$url" stream add common \
+  --subjects='user.*,resource.*' \
+  --storage=memory \
+  --retention=limits \
+  --max-age=24h \
+  --replicas=1 \
+  --defaults >/dev/null 2>&1 || fail "could not create the 'common' stream"
+
+# Only resource.vaulted carries traffic in this image: user.updated is
+# published by the webhook service and resource.banned by the abuse pipeline,
+# neither of which ships here. All four must exist anyway -- each subscriber
+# binds to its own by name and errors if it is missing.
+add_consumer() {
+  name=$1
+  subject=$2
+  /app/nats -s "$url" consumer add common "$name" \
+    --filter="$subject" \
+    --ack=explicit \
+    --deliver=all \
+    --pull \
+    --wait=30s \
+    --replay=instant \
+    --max-deliver=-1 \
+    --defaults >/dev/null 2>&1 || fail "could not create the '$name' consumer"
+}
+
+add_consumer web-ui-resource-vaulted resource.vaulted
+add_consumer web-ui-resource-banned  resource.banned
+add_consumer web-ui-user-updated     user.updated
+add_consumer vault-resource-banned   resource.banned
+
+log "stream 'common' and four consumers are ready"

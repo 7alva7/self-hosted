@@ -55,6 +55,12 @@ rm -f "$probe"
 # above instead of a bare mkdir error from a separate oneshot that s6-rc
 # would then refuse to start s3 over.
 #
+# Derived from the variables that name the buckets, not hardcoded --
+# VAULT_AWS_BUCKET, AWS_POSTER_CACHE_BUCKET, AWS_USER_SUBTITLE_BUCKET,
+# AWS_THUMBNAIL_BUCKET, all defaulted in common.template.env -- so
+# `-e VAULT_AWS_BUCKET=myvault` actually gets a directory created for it
+# instead of silently working against a bucket that doesn't exist.
+#
 # Each mkdir is checked. The probes above clear the two whole-directory
 # failure modes, but not a per-bucket one: something that is not a directory
 # occupying a bucket path. Unchecked, mkdir prints its own error straight to
@@ -62,7 +68,7 @@ rm -f "$probe"
 # look like this service -- and versitygw then starts and serves a bucket
 # that cannot hold an object. Fail the way the probes do instead: say what
 # is wrong, and idle rather than pretend to work.
-for b in vault posters subtitles thumbnails; do
+for b in "$VAULT_AWS_BUCKET" "$AWS_POSTER_CACHE_BUCKET" "$AWS_USER_SUBTITLE_BUCKET" "$AWS_THUMBNAIL_BUCKET"; do
   if ! mkdir -p "$STORAGE_DIR/$b" 2>/dev/null; then
     log "FATAL: cannot create the bucket directory $STORAGE_DIR/$b."
     log "Something that is not a directory already occupies that path -- remove it,"

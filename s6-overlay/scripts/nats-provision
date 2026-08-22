@@ -1,0 +1,56 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[nats-provision]" 1
+}
+
+url="nats://$NATS_SERVICE_HOST:$NATS_SERVICE_PORT"
+
+# Both vault and web-ui subscribe with nats.Bind, which fails unless the
+# stream AND the durable consumer already exist -- and web-ui's event handler
+# is part of its main serve group, so that failure crash-loops web-ui. vault
+# and web-ui order themselves after this oneshot (dependencies.d/nats-provision)
+# for exactly that reason, so it fails loudly instead of letting a
+# half-provisioned broker through.
+#
+# This oneshot does not create anything itself anymore -- creation now lives
+# in s6-overlay/scripts/nats-create-stream, run from s6-rc.d/nats/run's
+# background subshell on every start of the (memory-backed) broker, so a
+# broker that restarts on its own re-provisions itself without this oneshot
+# -- which only ever runs once -- needing to run again. This script only
+# waits for that creation to land, so there is exactly one process that ever
+# creates the stream/consumers and no way for two processes to race each
+# other to create the same object.
+fail() {
+  log "FATAL: $1"
+  log "vault and web-ui bind to durable consumers that must exist before they start."
+  log "web-ui will not start against a half-provisioned broker."
+  exit 1
+}
+
+consumer_exists() {
+  /app/nats -s "$url" consumer info common "$1" >/dev/null 2>&1
+}
+
+ready() {
+  /app/nats -s "$url" stream info common >/dev/null 2>&1 \
+    && consumer_exists web-ui-resource-vaulted \
+    && consumer_exists web-ui-resource-banned \
+    && consumer_exists web-ui-user-updated \
+    && consumer_exists vault-resource-banned
+}
+
+i=0
+while [ "$i" -lt 60 ]; do
+  if ready; then
+    log "stream 'common' and four consumers are ready"
+    exit 0
+  fi
+  i=$((i + 1))
+  sleep 1
+done
+
+fail "stream 'common' and/or its four durable consumers did not appear within 60s -- see nats-create-stream's own log lines above for why creation failed"

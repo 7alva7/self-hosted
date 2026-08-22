@@ -184,6 +184,25 @@ apiv1() {
     "$BASE_URL/api/v1$path" "$@"
 }
 
+# apiv1_json <method> <path> [extra curl args...]
+# Same as apiv1, but declares application/json instead of
+# application/x-bittorrent. apiv1's Content-Type is load-bearing for
+# POST /resource (see the comment above apiv1), but endpoints that decode a
+# JSON body with ShouldBindJSON only need the header to not trigger the CSRF
+# middleware's form-parsing path -- x-bittorrent already avoids that, so this
+# variant exists for correctness/readability at call sites that send JSON,
+# not because apiv1 was observed to fail against them.
+apiv1_json() {
+  local method="$1" path="$2"
+  shift 2
+  local key
+  key="$(api_key)" || fail "apiv1_json: could not obtain an API key for $method $path"
+  curl --fail-with-body -sS -X "$method" \
+    -H "Authorization: Bearer $key" \
+    -H "Content-Type: application/json" \
+    "$BASE_URL/api/v1$path" "$@"
+}
+
 # webtor_exec <cmd...>
 # Runs a command inside the running webtor container (the "webtor" service
 # in docker-compose.yml) via docker compose exec.

@@ -19,6 +19,7 @@ FROM ghcr.io/webtor-io/torrent-http-proxy:master@sha256:66826afad417782cfffc1d91
 FROM ghcr.io/webtor-io/rest-api:main@sha256:b626a44bf6706db929b7321f86d9126abc30f76a7b39b5187de2855fe35aee99 AS rest-api
 FROM ghcr.io/webtor-io/web-ui:main@sha256:eb264afdd6b91fe632b77f3ec4b13da9b7abdb5a3a7725004e8622df78219aff AS web-ui
 FROM ghcr.io/webtor-io/nginx-vod:main@sha256:4d9aaa6ac3dc2e3e73bdf8afd47d4ffab0a932f22b91a4c8cdd7674290bd89dd AS nginx-vod
+FROM ghcr.io/webtor-io/vault:main@sha256:0c130c5764c7f0c8377bd41bdf9545552098d702e49529d8acd65167d08acee8 AS vault
 
 # Not a webtor component: the S3 gateway backing /storage. Apache 2.0, one
 # static binary, and its posix backend keeps objects as ordinary files so a
@@ -26,6 +27,12 @@ FROM ghcr.io/webtor-io/nginx-vod:main@sha256:4d9aaa6ac3dc2e3e73bdf8afd47d4ffab0a
 # other stage; Renovate does not watch it (renovate.json matches
 # ghcr.io/webtor-io/**), so bumps here are deliberate and manual.
 FROM ghcr.io/versity/versitygw:latest@sha256:c4cbd9d9cb8dedbb055ac788dbd02635651b9b1cebac95b095b3217231aa87ad AS versitygw
+
+# Not webtor components: the event bus and the CLI that provisions its stream.
+# Both publish linux/amd64 and linux/arm64. Renovate does not watch either
+# (renovate.json matches ghcr.io/webtor-io/**), so bumps here are manual.
+FROM nats:alpine@sha256:d4ac35882ac65aff236cd65b9d3fa4d24332c681e1a85f94eedccd3cdd65b1da AS nats
+FROM natsio/nats-box:latest@sha256:ffce8bd103383f179f8c7f11cf645726acf5d17280706c530c3b342dbe16334c AS natsbox
 
 FROM alpine:${ALPINE_VER}
 
@@ -66,14 +73,24 @@ COPY --from=srt2vtt /server ./srt2vtt
 COPY --from=torrent-http-proxy /server ./torrent-http-proxy
 COPY --from=rest-api /server ./rest-api
 COPY --from=versitygw /usr/local/bin/versitygw ./versitygw
+COPY --from=nats /usr/local/bin/nats-server ./nats-server
+COPY --from=natsbox /usr/local/bin/nats ./nats
 COPY --from=content-transcoder /app/server ./content-transcoder
 COPY --from=content-transcoder /app/player ./player
-COPY --from=web-ui /app/server ./web-ui
-COPY --from=web-ui /app/templates ./templates
-COPY --from=web-ui /app/pub ./pub
-COPY --from=web-ui /app/migrations ./migrations
-COPY --from=web-ui /app/assets/dist ./assets/dist
+COPY --from=web-ui /app/server ./web-ui/web-ui
+COPY --from=web-ui /app/templates ./web-ui/templates
+COPY --from=web-ui /app/pub ./web-ui/pub
+COPY --from=web-ui /app/migrations ./web-ui/migrations
+COPY --from=web-ui /app/assets/dist ./web-ui/assets/dist
 COPY --from=nginx-vod /usr/local/nginx /usr/local/nginx
+
+# Vault gets its own working directory, not /app, because common-services
+# discovers migrations at the CWD-relative path "migrations". Since web-ui
+# moved into ./web-ui above, /app/migrations does not exist for anyone --
+# started from /app, vault would silently discover zero migrations, create
+# an empty gopg_migrations table, and never create its own schema.
+COPY --from=vault /server ./vault/vault
+COPY --from=vault /migrations ./vault/migrations
 
 COPY etc/webtor /etc/webtor
 COPY etc/nginx/conf /usr/local/nginx/conf
