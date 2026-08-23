@@ -16,43 +16,57 @@
 # "profile/webdav" inline, not only behind the data-async-layout fragment --
 # so no X-Layout dance is needed here, just a plain GET.
 #
-# The central assertion below is not "does WebDAV work" but "does it still
-# work with ONLY_AUTHORIZED's instance-wide login gate mounted". /webdav is
-# NOT in web-ui's onlyAuthorizedExempt() list (serve.go) -- unlike /stremio,
-# /api/v1, /s3 and /embed, which are deliberately exempted there. WebDAV
-# survives the gate only because handlers/access_token's token-resolving
-# middleware is registered (ats.RegisterHandler, serve.go) *before*
-# r.Use(auth.OnlyAuthorized(...)) is mounted: it injects the token's user
-# into the request context first, so OnlyAuthorized's own HasAuth() check
-# (auth/only_authorized.go) finds an authenticated user and never fires.
-# That is an accident of registration order, not a declared exemption --
-# reorder the two r.Use() calls in serve.go and a real, ADMIN_PASSWORD-
-# protected deployment would start 302-redirecting every WebDAV client to
-# /login with no test anywhere noticing. Caveat, stated plainly: this
-# suite's shared container runs with no ADMIN_PASSWORD, i.e. as web-ui's
-# "open instance" (services/auth/auth.go's auto-admin branch, the same one
-# 90-api.sh's assertion #2 and 92-cli.sh rely on) -- on THIS container,
+# The assertions against the shared container below are not "does WebDAV
+# work" but "does it still work with the token-resolving middleware in front
+# of it, end to end through PrefixDirectory". They are NOT, by themselves,
+# proof that WebDAV survives ONLY_AUTHORIZED's instance-wide login gate --
+# /webdav is NOT in web-ui's onlyAuthorizedExempt() list (serve.go) -- unlike
+# /stremio, /api/v1, /s3 and /embed, which are deliberately exempted there.
+# WebDAV survives the gate only because handlers/access_token's
+# token-resolving middleware is registered (ats.RegisterHandler, serve.go)
+# *before* r.Use(auth.OnlyAuthorized(...)) is mounted: it injects the
+# token's user into the request context first, so OnlyAuthorized's own
+# HasAuth() check (auth/only_authorized.go) finds an authenticated user and
+# never fires. That is an accident of registration order, not a declared
+# exemption -- reorder the two r.Use() calls in serve.go and a real,
+# ADMIN_PASSWORD-protected deployment would start 302-redirecting (or
+# 401-ing) every WebDAV client with no test anywhere noticing.
+#
+# This suite's shared container runs with no ADMIN_PASSWORD, i.e. as
+# web-ui's "open instance" (services/auth/auth.go's auto-admin branch, the
+# same one 90-api.sh's assertion #2 and 92-cli.sh rely on) -- there,
 # OnlyAuthorized's HasAuth() check passes for every request regardless of
 # token, because auto-admin already registers a real user before it runs.
-# So this assertion cannot exercise the session-vs-token distinction the
-# real risk lives in; it verifies (a) ONLY_AUTHORIZED's gate is genuinely
-# mounted here (read from the live web-ui process's own environment, not the
-# container's unexpanded common.env template) and (b) the token-gated
-# request still resolves end to end through PrefixDirectory with that gate
-# mounted. What it does still catch: any regression that breaks the
-# token->user wiring, the /webdav route registration, or the doubled-
-# "webdav" path-splitting -- just not a reordering that only a password-
-# protected deployment would expose.
+# So no assertion against the shared container can exercise the
+# session-vs-token distinction the real risk lives in. Section 5 below
+# closes that gap the same way 60-admin-password.sh does: it starts its own,
+# throwaway container with ADMIN_PASSWORD set, confirms an ordinary page
+# genuinely cannot be read without a session there, and only then proves a
+# tokened WebDAV request still reaches the surface -- the assertion that
+# actually has teeth, on a box where OnlyAuthorized's HasAuth() would reject
+# anyone without one.
 #
-# Re-runnable against a warm container: POST /webdav/url/generate is
-# idempotent (models.MakeAccessToken keeps the existing token on conflict --
-# see docs/webdav.md's "Token management" table), and every request below is
-# a read (PROPFIND/GET), so nothing this scenario does needs cleanup or an
-# EXIT trap.
+# Re-runnable against a warm container for the assertions against the
+# shared container: POST /webdav/url/generate is idempotent
+# (models.MakeAccessToken keeps the existing token on conflict -- see
+# docs/webdav.md's "Token management" table), and every request against it
+# below is a read (PROPFIND/GET). Section 5's own container is destroyed
+# (via its own EXIT-trapped `docker rm -f`) before this script exits either
+# way, so it never lingers for a second run to collide with.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 jar="$(mktemp)"
-trap 'rm -f "$jar"' EXIT
+closed_jar=""
+closed_login_body=""
+closed_name=""
+
+cleanup() {
+  rm -f "$jar"
+  [ -z "$closed_jar" ] || rm -f "$closed_jar"
+  [ -z "$closed_login_body" ] || rm -f "$closed_login_body"
+  [ -z "$closed_name" ] || docker rm -f "$closed_name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 # A plain GET establishes the session and carries the _csrf token the
 # generate form needs -- same pattern as api_key() in lib.sh and
@@ -161,5 +175,116 @@ assert_eq "$STATUS" "401" "uncredentialed PROPFIND status (well-formed, unissued
 [ -z "$BODY" ] || fail "uncredentialed PROPFIND (unissued token) returned a body, expected bare status: $BODY"
 
 echo "PASS-detail: uncredentialed PROPFIND rejected with bare 400 (no token) and bare 401 (unissued token)"
+
+# --- 5. The assertion with teeth: a closed instance (ADMIN_PASSWORD is read
+# at startup, so this needs its own container, same as 60-admin-password.sh) ---
+closed_port=18098
+closed_name=webtor-smoke-webdav-closed
+closed_password=smoke-webdav-password
+
+docker rm -f "$closed_name" >/dev/null 2>&1 || true
+docker run -d --name "$closed_name" -e ADMIN_PASSWORD="$closed_password" \
+  -p "$closed_port:8080" "${WEBTOR_IMAGE:-ghcr.io/webtor-io/self-hosted:latest}" >/dev/null
+
+closed="http://localhost:$closed_port"
+wait_for 180 "closed instance to boot" curl -fsS -o /dev/null "$closed/login"
+
+# 5a. Confirm the instance really is locked down: an ordinary page must
+# redirect to the login form, not render -- otherwise #5c below would prove
+# nothing about the gate.
+headers="$(curl -s -o /dev/null -D - \
+  -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
+  "$closed/profile")"
+code="$(printf '%s' "$headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+assert_eq "$code" "302" "a protected page on the closed WebDAV-test instance must redirect to the login form"
+location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')"
+case "$location" in
+  *login*) : ;;
+  *) fail "redirect Location does not point at the login form (got '$location')" ;;
+esac
+
+# 5b. Log in (same shape as 60-admin-password.sh) and mint a "webdav"
+# access_token inside this session. GET /login is the CSRF-form scrape
+# target here, not GET /profile: profile/webdav.html renders its own
+# _csrf-carrying form, but profile/password.html -- the only other form on
+# /profile -- switches to a plain "managed by env" hint with no form at all
+# once ADMIN_PASSWORD is set (PasswordManagedEnv, templates/partials/
+# profile/password.html), so a closed instance's /profile page carries no
+# _csrf field until a token already exists. The token scraped from /login
+# stays valid for the later /webdav/url/generate POST in the same
+# session/jar -- csrf.GetToken() (utrack/gin-csrf, wired in handlers/
+# session/handler.go) mints one salt per session and derives every token
+# from it, not one salt per page, the same fact 60-admin-password.sh's own
+# comment relies on to reuse its scraped token across both its login
+# attempts.
+closed_jar="$(mktemp)"
+closed_login_body="$(mktemp)"
+curl -fsS -c "$closed_jar" -o "$closed_login_body" "$closed/login"
+csrf_token="$(grep -o 'name="_csrf" value="[^"]*"' "$closed_login_body" | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+[ -n "$csrf_token" ] || fail "GET /login (closed instance) did not render an _csrf token to submit"
+
+login_headers="$(curl -s -o /dev/null -D - -b "$closed_jar" -c "$closed_jar" \
+  -X POST --data-urlencode "_csrf=$csrf_token" -d "password=$closed_password" "$closed/login")"
+login_code="$(printf '%s' "$login_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+assert_eq "$login_code" "302" "login with the correct password on the closed WebDAV-test instance"
+
+# services/session's csrf.Middleware exempts the whole "/webdav/" prefix
+# from its own mismatch check (serve.go's sess.RegisterHandler csrfIgnorePrefixes
+# list, alongside /s/, /token/, /s3/, /api/, /auth/dashboard,
+# /transcoder-session/ -- the same fact 91-s3-webui.sh documents for /s3/'s
+# own generate endpoint) -- so this POST would in fact succeed even with a
+# wrong or missing _csrf value. The real token is submitted anyway: this
+# scenario is proving the WebDAV *feature*, not probing which prefixes
+# happen to skip CSRF enforcement, and a real browser submits the real
+# value regardless of whether the server would have let a wrong one
+# through.
+gen_headers="$(curl -s -o /dev/null -D - -b "$closed_jar" -c "$closed_jar" \
+  -X POST --data-urlencode "_csrf=$csrf_token" "$closed/webdav/url/generate")"
+gen_code="$(printf '%s' "$gen_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+assert_eq "$gen_code" "302" "POST /webdav/url/generate on the closed WebDAV-test instance"
+
+closed_profile_body="$(curl --fail-with-body -sS -b "$closed_jar" -c "$closed_jar" "$closed/profile")" \
+  || fail "GET /profile (closed instance, authenticated) failed"
+closed_webdav_url="$(webdav_field "$closed_profile_body" || true)"
+[ -n "$closed_webdav_url" ] || fail "could not obtain a WebDAV URL from the closed instance's /profile after generating"
+
+# The scraped URL embeds web-ui's configured DOMAIN (unset for this
+# throwaway container, so it defaults to the image's baked-in value, not
+# this container's actual published port) -- only the path is real, so this
+# reduces the scraped URL to that path and replays it against $closed.
+closed_webdav_path="$(printf '%s' "$closed_webdav_url" | sed -E 's#^https?://[^/]+##')"
+case "$closed_webdav_path" in
+  /s/*/webdav/) : ;;
+  *) fail "WebDAV URL path from the closed instance does not look like the documented alias: $closed_webdav_path" ;;
+esac
+
+# 5c. The assertion with teeth: a tokened WebDAV request still reaches the
+# surface on an instance where #5a already proved an uncredentialed request
+# to an ordinary page cannot.
+resp="$(propfind "$closed$closed_webdav_path" 1)"
+split_status "$resp"
+assert_eq "$STATUS" "207" "credentialed PROPFIND on the closed WebDAV-test instance status"
+closed_names="$(printf '%s' "$BODY" | python3 -c "
+import sys, xml.etree.ElementTree as ET
+ns = {'d': 'DAV:'}
+root = ET.fromstring(sys.stdin.read())
+print(' '.join(sorted(e.text for e in root.findall('.//d:response/d:propstat/d:prop/d:displayname', ns))))
+" 2>&1)" || fail "closed-instance credentialed PROPFIND response is not well-formed WebDAV multistatus XML: $closed_names
+  body was: $BODY"
+assert_eq "$closed_names" "all movies series torrents" "closed-instance credentialed PROPFIND root displayname set"
+
+# 5d. Both directions on the closed instance: the same request with no
+# token/cookie at all must NOT reach the surface. This is the negative
+# control that gives 5c its teeth -- if this one also returned 207, 5c would
+# not be proving the gate did anything.
+resp="$(propfind "$closed/webdav/fs/webdav/" 1)"
+split_status "$resp"
+case "$STATUS" in
+  401 | 302) : ;;
+  *) fail "uncredentialed PROPFIND on the closed WebDAV-test instance status (got '$STATUS', want 401 or a redirect to /login)" ;;
+esac
+[ -z "$BODY" ] || fail "uncredentialed PROPFIND on the closed instance returned a body, expected bare status: $BODY"
+
+echo "PASS-detail: closed instance (ADMIN_PASSWORD set) -- /profile redirects to login unauthenticated, a tokened WebDAV request still returns 207 with the real root shape, and the same request with no token/cookie is rejected ($STATUS)"
 
 echo "PASS: webdav"
