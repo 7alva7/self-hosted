@@ -663,6 +663,92 @@ git commit -m "feat(profile): let a self-hosted operator set and verify a notifi
 
 ---
 
+## Task 7b: Replace the self-hosted label with a capability
+
+**Repository:** `web-ui`
+
+**Files:**
+- Modify: `services/auth/auth.go:596`, `handlers/profile/handler.go` (5 sites), `templates/views/profile/get.html:86`
+
+**Interfaces:**
+- Produces: a capability predicate replacing `Auth.SelfHosted()`.
+
+No explicit self-hosted flag may exist in this project; behaviour is gated on
+capability. `Auth.SelfHosted()` violates that by name. Its body is already a
+capability check — `return !s.hasSupetokens` — so this is a rename and a
+reframe, not a change in logic.
+
+The distinction is not cosmetic. A deployment label collects unrelated
+behaviour behind one boolean until nobody can say what it controls; a
+capability predicate names the question being asked, so a reader knows what
+it gates and any deployment with that capability gets the right behaviour
+without being added to a list.
+
+- [ ] **Step 1: Find every site**
+
+```bash
+cd /Users/vintikzzzz/Projects/webtor/web-ui
+grep -rn "SelfHosted" --include="*.go" --include="*.html" . | grep -v _test
+```
+Expected: seven. Record the list; it may have drifted.
+
+- [ ] **Step 2: Decide the question each site actually asks**
+
+Read the doc comment on `SelfHosted` and the call site in
+`handlers/profile/handler.go:479`. The password section asks whether this
+deployment can have a local administrator password at all — true exactly when
+an external identity provider does not own user identity.
+
+Name the predicate for that question. `IdentityManagedExternally() bool`,
+defined as `return s.hasSupetokens`, with call sites reading
+`!a.IdentityManagedExternally()`, expresses it without naming a deployment.
+If you find a better name for the same question, use it and say why — but it
+must describe a capability, not a deployment.
+
+- [ ] **Step 3: Rewrite the doc comment**
+
+The existing comment explains why this predicate rather than
+`AdminPasswordActive` gates the section: the latter also requires a password
+to already exist, which is the state the section exists to get out of. That
+reasoning is correct and must survive the rename — only the sentence naming
+the deployment changes.
+
+- [ ] **Step 4: Replace all seven sites, including the template**
+
+`templates/views/profile/get.html:86` reads `{{ if .Data.SelfHosted }}`; the
+struct field in `handlers/profile/handler.go:90` feeding it renames too.
+
+- [ ] **Step 5: Prove the gate still gates**
+
+```bash
+make test
+```
+
+Then confirm behaviour did not invert: build and run with SuperTokens absent
+and check the password section renders, and with it present and check it does
+not. If you cannot reach the SuperTokens-present state without credentials,
+say so and instead assert it directly against the predicate in a test —
+`IdentityManagedExternally()` true must hide the section. A rename that
+silently flips a boolean passes every compile and every test that only checks
+one state.
+
+- [ ] **Step 6: Confirm nothing else names a deployment**
+
+```bash
+grep -rniE "selfhosted|self_hosted|is_self" --include="*.go" --include="*.html" . | grep -v _test
+```
+Expected: no matches outside comments that describe the deployment for a
+human reader. Report anything that remains and why it is not a gate.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add services/auth/auth.go handlers/profile/handler.go templates/views/profile/get.html
+git commit -m "refactor(auth): gate on identity ownership, not a deployment label"
+```
+
+---
+
 ## Task 8: The dormant nil dereference
 
 **Repository:** `web-ui`
