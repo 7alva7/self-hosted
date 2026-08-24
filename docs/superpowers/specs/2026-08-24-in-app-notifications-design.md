@@ -87,57 +87,84 @@ operator configuring anything.
 
 ### Storage
 
-A new table, not an extension of `notification`. The existing one is a
-delivery journal keyed `(key, "to", created_at)` where `to` is an email
-address; it exists to suppress duplicate *mails* within 24 hours. A feed is
-keyed on the user and carries read state. Overloading one table with both
-would tangle two lifetimes — a mail is deduped and forgotten, a feed entry is
-read and kept.
+The existing `notification` table grows the feed's columns. It is not a
+second table, and the first draft of this spec was wrong to propose one.
+
+That table already stores `key`, `title`, `template`, `body`, `"to"` and
+`created_at`. The rendered title and body are exactly what a feed entry
+shows, so a separate table would duplicate them and let the two copies
+drift.
+
+More importantly, its deduplication is already the semantics a feed needs,
+and better than the one the first draft invented. Keys are built per event
+(`services/notification/notification.go:210-263`): `vaulted-<resourceID>`,
+`transfer-timeout-<resourceID>` and `expired-<resourceID>` are scoped to a
+resource, but **`expiring-<days>` is not** — it is `expiring-7`,
+`expiring-3`, `expiring-1`, a digest covering everything due in that many
+days. A unique index on `(user_id, key)`, which the first draft proposed,
+would therefore allow one seven-day warning per user *ever*: next month's
+would collide with last month's and be silently dropped. The existing
+`(key, "to", created_at DESC)` index with a 24-hour window has no such
+flaw.
+
+The migration:
 
 ```sql
-CREATE TABLE public.user_notification (
-    user_notification_id uuid DEFAULT uuid_generate_v4() NOT NULL,
-    user_id    uuid NOT NULL REFERENCES public."user"(user_id) ON DELETE CASCADE,
-    key        text NOT NULL,
-    title      text NOT NULL,
-    body       text NOT NULL,
-    url        text,
-    read_at    timestamptz,
-    created_at timestamptz DEFAULT now() NOT NULL,
-    CONSTRAINT user_notification_pk PRIMARY KEY (user_notification_id)
-);
+ALTER TABLE public.notification
+    ADD COLUMN user_id   uuid REFERENCES public."user"(user_id) ON DELETE CASCADE,
+    ADD COLUMN read_at   timestamptz,
+    ADD COLUMN mailed_at timestamptz,
+    ALTER COLUMN "to" DROP NOT NULL;
 
-CREATE INDEX user_notification_user_created_idx
-    ON public.user_notification (user_id, created_at DESC);
-CREATE UNIQUE INDEX user_notification_dedupe_idx
-    ON public.user_notification (user_id, key);
+CREATE INDEX notification_user_created_idx
+    ON public.notification (user_id, created_at DESC);
+CREATE INDEX notification_key_user_created_idx
+    ON public.notification (key, user_id, created_at DESC);
 ```
 
-`ON DELETE CASCADE` matters: account deletion already exists
-(`POST /profile/delete`) and must not leave orphans.
+Four changes, each doing one thing:
 
-The unique index on `(user_id, key)` gives the feed its own deduplication.
-The mail journal's 24-hour window is about not pestering an inbox; a feed
-entry should exist once per distinct event and be updated rather than
-duplicated.
+- **`user_id`** is what a feed is keyed on. Existing rows keep it NULL and so
+  appear in nobody's feed, which is the intended outcome — the journal is a
+  dedupe log, not a history worth showing.
+- **`read_at`** is the feed's own state and belongs nowhere else.
+- **`mailed_at`** is the fix for the journal lying. Today a row means "a
+  letter left"; with a feed it must also cover "shown but never mailed", and
+  those are different facts. `mailed_at IS NULL` says plainly that nothing
+  reached an SMTP server.
+- **`"to"` becomes nullable** so an entry with no destination stores NULL
+  rather than a placeholder. Writing the sentinel here would recreate the
+  exact confusion this design exists to remove.
 
-### Write path
+Deduplication moves from `(key, "to")` to `(key, user_id)`, keeping the
+24-hour window. That works for entries with no address, which the old key
+could not express, and it is the same guarantee for everyone who does have
+one.
 
-The feed is the record; email is a delivery channel for it.
+### Ordering, which is not a detail
 
-`services/notification.Service.Send` currently renders a template, calls the
-mailer, and journals. It gains a step: **write the feed row first, then
-attempt mail if the address is deliverable.** One event produces one feed
-entry whether or not mail goes anywhere.
+`Service.Send` carries a comment (`services/notification/notification.go:100-114`)
+explaining why it mails first and journals second: a row exists only for a
+letter that actually left, so a dedupe hit genuinely means "already sent".
+Journalling first would let a failed SMTP attempt leave a row behind, and the
+retry — same key, inside the window — would be swallowed as a duplicate of a
+letter nobody received.
 
-This ordering is the point. Writing the feed only on mail failure, or only
-when the address is undeliverable, would give users with working email no
-feed at all — and they are the ones who most often say "I never got the
-mail".
+That reasoning is sound and must not be discarded when the feed arrives. It
+is also specifically about the *mail*. The feed has the opposite requirement:
+its entry must exist whether or not mail succeeds, because the entry is the
+notification and the letter is only one way of carrying it.
 
-All seven existing notifications feed it: `SendVaulted`, `SendExpiring`,
-`SendTransferTimeout`, `SendExpired`, `SendSubscriptionOn`,
-`SendSubscriptionOff`, `SendSubscriptionUpdate`.
+So the row is written first with `mailed_at` NULL — the feed entry exists
+immediately — and `mailed_at` is stamped afterwards, only when an SMTP server
+actually accepted the message. Dedupe for mail then reads "a row with this
+key for this user, mailed within 24 hours", which preserves exactly the
+property the original comment protects: a retry after a failed send is not
+mistaken for a duplicate, because the failed attempt left `mailed_at` NULL.
+
+Update that comment to say this. A comment describing an ordering that no
+longer holds is worse than none, and this project has already paid for that
+twice.
 
 ### Surface
 
