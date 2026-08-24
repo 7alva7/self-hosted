@@ -218,6 +218,33 @@ is created for you alongside the main one. With `USE_LOCALPG=false` you must
 create it yourself on your external PostgreSQL server before starting the
 container — the default name is `vault`.
 
+## Notifications
+
+Webtor keeps an in-app notification feed — vault saves, vault content that is
+expiring or has expired, transfer timeouts, and the like — behind the bell
+icon in the navbar, with an unread-count badge next to it and the full list
+at `/notifications`. The feed works with no configuration: every account
+gets it for free, whether or not mail is set up.
+
+Setting a notification email address is optional. The profile page's email
+section only appears once SMTP is configured (see below) — without a mail
+server there is no way to send the confirmation link an address needs before
+it can be used. Once verified, matching notifications are mailed there too,
+in addition to appearing in the feed.
+
+## Configuring Email Notifications (SMTP)
+
+By default no SMTP server is configured, so no mail is ever sent —
+notifications still show up in the feed, but nothing goes out by email.
+Set these to enable delivery:
+
+- **SMTP_HOST** - SMTP server host (default: unset; leave unset to keep email disabled)
+- **SMTP_PORT** - SMTP server port (default: 465)
+- **SMTP_USER** - SMTP username
+- **SMTP_PASS** - SMTP password
+- **SMTP_SECURE** - use implicit TLS when connecting to the SMTP server (default: true)
+- **SMTP_FROM** - "From" address on outgoing mail (default: falls back to `SMTP_USER` if unset)
+
 ## Configuring content enrichment
 
 - **OMDB_API_KEY** - key for OMDB API
