@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # The embedded S3 store (versitygw over /storage) is provisioned and
 # actually serving, not just registered with s6.
+#
+# Not to be confused with 91-s3-webui.sh, which covers a completely
+# different "s3": web-ui's own /s3 endpoint, an S3-protocol gateway over the
+# user's torrent library (buckets torrents/all/movies/series), reached
+# through nginx on the public web port. This scenario is about versitygw on
+# 127.0.0.1:8099, internal-only, buckets vault/posters/subtitles/thumbnails.
+# Same three letters, unrelated services -- see 91-s3-webui.sh's own header.
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 # 1. The four bucket directories exist inside the container. s3/run creates
