@@ -79,7 +79,13 @@ IFS='|' read -r notification_id user_id mailed_at read_at title <<<"$row"
 resp="$(curl -sS -c "$jar" -b "$jar" -w 'HTTPSTATUS:%{http_code}' "$BASE_URL/notifications")"
 split_status "$resp"
 assert_eq "$STATUS" "200" "GET /notifications status"
-printf '%s' "$BODY" | grep -qF "$title" \
+# Body matches use a herestring, never `printf ... | grep -q`. Under
+# `set -o pipefail` (tests/lib.sh) that pipeline reports failure when grep
+# exits on its first match and printf is still writing: the write dies with
+# EPIPE and pipefail surfaces it, so a body that DOES match is reported as a
+# miss. It bit the navbar check below, whose page is the largest response the
+# suite fetches. Same reason `grep -m1` replaces `| head -1` further down.
+grep -qF "$title" <<<"$BODY" \
   || fail "GET /notifications body does not contain the notification's title ('$title')"
 
 # --- 4. Navbar badge before/after POST /notifications/read ----------------
@@ -90,10 +96,10 @@ printf '%s' "$BODY" | grep -qF "$title" \
 # state, not a rendering nuance.
 home_before="$(curl --fail-with-body -sS -c "$jar" -b "$jar" "$BASE_URL/")" \
   || fail "GET / (before markRead) failed"
-printf '%s' "$home_before" | grep -q 'notification-badge' \
+grep -q 'notification-badge' <<<"$home_before" \
   || fail "navbar on / shows no unread badge before POST /notifications/read, even though the vaulted-pledge notification is unread"
 
-csrf_token="$(printf '%s' "$BODY" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(grep -m1 -o 'name="_csrf" value="[^"]*"' <<<"$BODY" | sed -E 's/.*value="([^"]*)".*/\1/')"
 [ -n "$csrf_token" ] || fail "GET /notifications did not render a _csrf token to submit to /notifications/read"
 
 curl --fail-with-body -sS -c "$jar" -b "$jar" \
@@ -103,7 +109,7 @@ curl --fail-with-body -sS -c "$jar" -b "$jar" \
 
 home_after="$(curl --fail-with-body -sS -c "$jar" -b "$jar" "$BASE_URL/")" \
   || fail "GET / (after markRead) failed"
-printf '%s' "$home_after" | grep -q 'notification-badge' \
+grep -q 'notification-badge' <<<"$home_after" \
   && fail "navbar on / still shows the unread badge after POST /notifications/read"
 
 # --- 5. Profile offers no email input: no SMTP configured -----------------
@@ -114,7 +120,7 @@ printf '%s' "$home_after" | grep -q 'notification-badge' \
 # the response body, not merely empty or disabled.
 profile_body="$(curl --fail-with-body -sS -c "$jar" -b "$jar" "$BASE_URL/profile")" \
   || fail "GET /profile failed"
-printf '%s' "$profile_body" | grep -q 'id="email"' \
+grep -q 'id="email"' <<<"$profile_body" \
   && fail "GET /profile renders the notification-email input section even though no SMTP is configured"
 
 echo "PASS: notifications"
