@@ -39,8 +39,14 @@ log() {
   echo "[cron:${name}] $1"
 }
 
-# Sending mail without a relay is not a failure worth reporting daily -- it is
-# a feature the operator has not configured. Say so once and stop.
+# notification-send's only output is mail: sending it without a relay is not
+# a failure worth reporting daily, it is a feature the operator has not
+# configured. Say so once and stop.
+#
+# subscription-poll is deliberately NOT covered by this guard even though it
+# runs on the same hourly cadence and used to feed notification-send: its
+# findings now also land in the in-app notification feed, so the poll stays
+# useful -- and worth running -- with no SMTP configured at all.
 if [ "$name" = "notification-send" ] && [ -z "${SMTP_HOST:-}" ]; then
   log "SMTP_HOST is empty -- skipping; set SMTP_HOST/SMTP_USER/SMTP_PASS/SMTP_FROM to deliver notifications"
   exit 0
