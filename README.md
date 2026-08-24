@@ -232,6 +232,12 @@ server there is no way to send the confirmation link an address needs before
 it can be used. Once verified, matching notifications are mailed there too,
 in addition to appearing in the feed.
 
+The section is also hidden when an external identity provider owns the
+address, since it is not this instance's to change. That does not happen in
+the image as shipped, which configures no such provider; it is worth knowing
+only if you point this instance at one yourself, in which case the missing
+section is deliberate rather than a fault.
+
 ## Configuring Email Notifications (SMTP)
 
 By default no SMTP server is configured, so no mail is ever sent —
