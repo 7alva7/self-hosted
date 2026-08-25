@@ -83,14 +83,19 @@ trap 'rm -f "$jar"' EXIT
 
 profile_body="$(curl --fail-with-body -sS -c "$jar" "$BASE_URL/profile")" \
   || fail "GET /profile failed"
-csrf_token="$(printf '%s' "$profile_body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$profile_body")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
 
 stremio_field() {
   # Same JS-string-context scrape as 93-webdav.sh's webdav_field, against
   # profile/stremio.html's `var stremioAddonUrl = "...";`.
-  printf '%s' "$1" | grep -o 'var stremioAddonUrl = "[^"]*"' | head -1 \
-    | sed -E 's/.*"(.*)"/\1/; s/\\\//\//g'
+  local raw
+  raw="$(first_group 'var stremioAddonUrl = "([^"]*)"' "$1")" || return 1
+  # The slash goes through a variable: written literally, the replacement
+  # pattern in ${var//\//} is ambiguous with the expansion's own delimiter
+  # and silently leaves the string untouched.
+  local sl="/"
+  printf '%s' "${raw//\\$sl/$sl}"
 }
 
 addon_url="$(stremio_field "$profile_body" || true)"

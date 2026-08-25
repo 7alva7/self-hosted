@@ -49,7 +49,7 @@ assert_eq "$leaked" "0" "vault's tables were created in web-ui's database"
 nats_cli() { webtor_exec /app/nats -s nats://127.0.0.1:4222 "$@" </dev/null; }
 consumers="$(nats_cli consumer ls common)"
 for cn in web-ui-resource-vaulted web-ui-resource-banned web-ui-user-updated vault-resource-banned; do
-  printf '%s' "$consumers" | grep -q "$cn" \
+  grep -q "$cn" <<<"$consumers" \
     || fail "durable consumer '$cn' is missing; its subscriber cannot bind and will not start
   consumers present: $consumers"
 done

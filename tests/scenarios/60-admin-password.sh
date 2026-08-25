@@ -48,7 +48,7 @@ wait_for 180 "closed instance to boot" curl -fsS -o /dev/null "$closed/login"
 headers="$(curl -s -o /dev/null -D - \
   -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
   "$closed/profile")"
-code="$(printf '%s' "$headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+code="$(head -1 <<<"$headers" | tr -d '\r' | awk '{print $2}')"
 assert_eq "$code" "302" "a protected page on a closed instance must redirect to the login form"
 
 location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')"
@@ -73,7 +73,7 @@ case "$login_body" in
   *) fail "GET /login did not render a password field" ;;
 esac
 
-csrf_token="$(printf '%s' "$login_body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$login_body")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /login did not render an _csrf token to submit"
 
 # A wrong password must be rejected with 401 and the form re-rendered --
@@ -89,7 +89,7 @@ csrf_token="$(printf '%s' "$login_body" | grep -o 'name="_csrf" value="[^"]*"' |
 wrong_body="$(mktemp)"
 wrong_headers="$(curl -s -o "$wrong_body" -D - -b "$cookiejar" -c "$cookiejar" \
   -X POST --data-urlencode "_csrf=$csrf_token" -d 'password=wrong-password' "$closed/login")"
-wrong_code="$(printf '%s' "$wrong_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+wrong_code="$(head -1 <<<"$wrong_headers" | tr -d '\r' | awk '{print $2}')"
 [ "$wrong_code" = "401" ] || fail "a wrong password did not return 401 (got $wrong_code)"
 case "$(cat "$wrong_body")" in
   *'type="password"'*) : ;;
@@ -106,9 +106,9 @@ esac
 # works by reusing it against the page we were bounced from.
 right_headers="$(curl -s -o /dev/null -D - -b "$cookiejar" -c "$cookiejar" \
   -X POST --data-urlencode "_csrf=$csrf_token" -d 'password=smoke-test-password' "$closed/login")"
-right_code="$(printf '%s' "$right_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+right_code="$(head -1 <<<"$right_headers" | tr -d '\r' | awk '{print $2}')"
 [ "$right_code" = "302" ] || fail "the correct password did not redirect (got $right_code)"
-printf '%s' "$right_headers" | tr -d '\r' | grep -qi '^set-cookie:' \
+grep -qi '^set-cookie:' <<<"${right_headers//$'\r'/}" \
   || fail "the correct password did not set a session cookie"
 
 authed_code="$(curl -s -o /dev/null -w '%{http_code}' -b "$cookiejar" \

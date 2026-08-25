@@ -62,9 +62,24 @@ IFS='|' read -r notification_id user_id mailed_at read_at title <<<"$row"
 # fix, smtpMailer.Send returned nil with no SMTP_HOST configured, so
 # Service.Send could not tell "delivered" from "never attempted" and stamped
 # mailed_at anyway. That lie fed straight into the 24h dedupe, which then
-# suppressed the real send once SMTP was configured. A non-null mailed_at
-# here, on a container with no SMTP_HOST set at all, is that regression.
+# suppressed the real send once SMTP was configured.
+#
+# Be precise about which mechanism this pins, because it is not the one the
+# sentence above might suggest. This account's address is the sentinel
+# "admin", so Deliverable() is false, `to` stays NULL and Send returns before
+# it ever consults whether a mail transport exists. What a non-null mailed_at
+# here would therefore catch is: MarkMailed called unconditionally, a
+# now()-style default on the column, or a re-inversion back to
+# journal-then-send. It does NOT exercise the "transport absent, so do not
+# stamp" path -- that needs a deliverable address on a mail-less instance,
+# which this container cannot produce. Left uncovered deliberately, said
+# out loud rather than implied.
 [ -z "$mailed_at" ] || fail "notification row has mailed_at='$mailed_at' even though this container has no SMTP configured -- Service.Send is claiming a delivery that never happened (the journal-lying bug this scenario exists to catch)"
+
+# Step 4 reads the badge to decide whether the entry is unread. Pin the
+# precondition here instead, so a badge failure cannot be silently explained
+# away as "the row was already read".
+[ -z "$read_at" ] || fail "notification row is already marked read (read_at='$read_at') before this scenario touched it -- the badge assertions below would be testing nothing"
 
 [ -n "$title" ] || fail "notification row for the vaulted pledge has an empty title"
 
@@ -99,7 +114,7 @@ home_before="$(curl --fail-with-body -sS -c "$jar" -b "$jar" "$BASE_URL/")" \
 grep -q 'notification-badge' <<<"$home_before" \
   || fail "navbar on / shows no unread badge before POST /notifications/read, even though the vaulted-pledge notification is unread"
 
-csrf_token="$(grep -m1 -o 'name="_csrf" value="[^"]*"' <<<"$BODY" | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$BODY")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /notifications did not render a _csrf token to submit to /notifications/read"
 
 curl --fail-with-body -sS -c "$jar" -b "$jar" \

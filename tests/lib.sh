@@ -1,6 +1,28 @@
 # Shared helpers for smoke scenarios. Sourced, not executed.
 set -euo pipefail
 
+# csrf_from TEXT -- the value of the first _csrf hidden input in TEXT.
+#
+# Bash regex, not grep: it takes the first match by definition, with no pipe
+# and no subprocess. The two forms this replaces were both wrong here.
+# `grep -o ... | head -1` lets head exit at one line while grep is still
+# writing, and `set -o pipefail` (top of this file) turns the resulting EPIPE
+# into a failed assertion -- a page that DOES carry a token reported as one
+# that does not. `grep -m1 -o` is not a fix either: -m1 stops after the first
+# matching LINE but -o still prints every match on it, so a page with two
+# _csrf inputs on one line yields two values joined by a newline.
+csrf_from() {
+  [[ "$1" =~ name=\"_csrf\"[[:space:]]+value=\"([^\"]*)\" ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# first_group PATTERN TEXT -- first capture group of PATTERN in TEXT.
+# Same reasoning as csrf_from; PATTERN is an ERE with exactly one group.
+first_group() {
+  [[ "$2" =~ $1 ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
 FIXTURE_DIR="$TESTS_DIR/fixtures"
@@ -38,7 +60,13 @@ wait_for() {
     sleep 1
   done
 
-  detail="$(printf '%s' "$out" | head -c "$WAIT_FOR_OUTPUT_LIMIT")"
+  # Bash substring, not `printf | head -c`: under `set -o pipefail` that
+  # pipeline reports 141 once $out exceeds the pipe buffer, because head
+  # exits at its limit and printf dies with EPIPE. As a simple command under
+  # `set -e` that killed the script here silently -- no timeout message at
+  # all -- and it fired exactly when the timed-out command had produced a
+  # large body, i.e. when the diagnostic was most needed.
+  detail="${out:0:$WAIT_FOR_OUTPUT_LIMIT}"
   if [ "${#out}" -gt "$WAIT_FOR_OUTPUT_LIMIT" ]; then
     detail="$detail ...[truncated, ${#out} bytes total]"
   fi
@@ -122,7 +150,7 @@ api_key() {
   # with "jar: unbound variable" instead of cleaning anything up.
   trap "rm -f '$jar'" EXIT
   body="$(curl --fail-with-body -sS -c "$jar" "$BASE_URL/profile")"
-  csrf_token="$(printf '%s' "$body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+  csrf_token="$(csrf_from "$body")" || csrf_token=""
   [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
 
   resp="$(curl -sS -b "$jar" -w 'HTTPSTATUS:%{http_code}' "$BASE_URL/api-credentials/key")"
