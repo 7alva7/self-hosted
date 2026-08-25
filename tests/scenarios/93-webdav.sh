@@ -73,7 +73,7 @@ trap cleanup EXIT
 # 91-s3-webui.sh's profile fetch.
 profile_body="$(curl --fail-with-body -sS -c "$jar" "$BASE_URL/profile")" \
   || fail "GET /profile failed"
-csrf_token="$(printf '%s' "$profile_body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$profile_body")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
 
 webdav_field() {
@@ -82,8 +82,13 @@ webdav_field() {
   # renders this in a JS-string context, which always quotes -- same
   # reasoning as 91-s3-webui.sh's s3_field. Escaped slashes (\/) are
   # unescaped so the result is a normal URL.
-  printf '%s' "$1" | grep -o 'var webdavUrl = "[^"]*"' | head -1 \
-    | sed -E 's/.*"(.*)"/\1/; s/\\\//\//g'
+  local raw
+  raw="$(first_group 'var webdavUrl = "([^"]*)"' "$1")" || return 1
+  # The slash goes through a variable: written literally, the replacement
+  # pattern in ${var//\//} is ambiguous with the expansion's own delimiter
+  # and silently leaves the string untouched.
+  local sl="/"
+  printf '%s' "${raw//\\$sl/$sl}"
 }
 
 webdav_url="$(webdav_field "$profile_body" || true)"
@@ -195,7 +200,7 @@ wait_for 180 "closed instance to boot" curl -fsS -o /dev/null "$closed/login"
 headers="$(curl -s -o /dev/null -D - \
   -H 'Accept: text/html' -H 'Sec-Fetch-Mode: navigate' \
   "$closed/profile")"
-code="$(printf '%s' "$headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+code="$(head -1 <<<"$headers" | tr -d '\r' | awk '{print $2}')"
 assert_eq "$code" "302" "a protected page on the closed WebDAV-test instance must redirect to the login form"
 location="$(printf '%s' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')"
 case "$location" in
@@ -220,12 +225,12 @@ esac
 closed_jar="$(mktemp)"
 closed_login_body="$(mktemp)"
 curl -fsS -c "$closed_jar" -o "$closed_login_body" "$closed/login"
-csrf_token="$(grep -o 'name="_csrf" value="[^"]*"' "$closed_login_body" | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$(cat "$closed_login_body")")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /login (closed instance) did not render an _csrf token to submit"
 
 login_headers="$(curl -s -o /dev/null -D - -b "$closed_jar" -c "$closed_jar" \
   -X POST --data-urlencode "_csrf=$csrf_token" -d "password=$closed_password" "$closed/login")"
-login_code="$(printf '%s' "$login_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+login_code="$(head -1 <<<"$login_headers" | tr -d '\r' | awk '{print $2}')"
 assert_eq "$login_code" "302" "login with the correct password on the closed WebDAV-test instance"
 
 # services/session's csrf.Middleware exempts the whole "/webdav/" prefix
@@ -240,7 +245,7 @@ assert_eq "$login_code" "302" "login with the correct password on the closed Web
 # through.
 gen_headers="$(curl -s -o /dev/null -D - -b "$closed_jar" -c "$closed_jar" \
   -X POST --data-urlencode "_csrf=$csrf_token" "$closed/webdav/url/generate")"
-gen_code="$(printf '%s' "$gen_headers" | head -1 | tr -d '\r' | awk '{print $2}')"
+gen_code="$(head -1 <<<"$gen_headers" | tr -d '\r' | awk '{print $2}')"
 assert_eq "$gen_code" "302" "POST /webdav/url/generate on the closed WebDAV-test instance"
 
 closed_profile_body="$(curl --fail-with-body -sS -b "$closed_jar" -c "$closed_jar" "$closed/profile")" \

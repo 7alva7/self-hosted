@@ -67,14 +67,14 @@ s3_field() {
   # s3_field <body> <field> -- pulls one value out of the inline s3Values
   # script block.
   local body="$1" field="$2"
-  printf '%s' "$body" | grep -o "${field}:[[:space:]]*\"[^\"]*\"" | head -1 | sed -E 's/.*"([^"]*)"[[:space:]]*$/\1/'
+  first_group "${field}:[[:space:]]*\"([^\"]*)\"" "$body"
 }
 
 # A plain (non-XHR) GET still establishes the session and carries the _csrf
 # token every form on the page shares, S3's generate form included.
 profile_body="$(curl --fail-with-body -sS -c "$s3_jar" "$BASE_URL/profile")" \
   || fail "GET /profile failed"
-csrf_token="$(printf '%s' "$profile_body" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+csrf_token="$(csrf_from "$profile_body")" || csrf_token=""
 [ -n "$csrf_token" ] || fail "GET /profile did not render an _csrf token to submit"
 
 s3_fragment="$(fetch_s3_fragment)" || fail "fetching the profile/s3 fragment failed"
@@ -206,7 +206,7 @@ esac
 # --- 3. A correctly signed request succeeds and lists the expected buckets
 buckets_body="$(s3_curl "$BASE_URL/s3")" || fail "signed GET /s3 was rejected"
 for b in torrents all movies series; do
-  printf '%s' "$buckets_body" | grep -q "<Name>$b</Name>" \
+  grep -q "<Name>$b</Name>" <<<"$buckets_body" \
     || fail "signed GET /s3 bucket listing is missing bucket '$b': $buckets_body"
 done
 

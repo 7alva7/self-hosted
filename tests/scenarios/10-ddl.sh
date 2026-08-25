@@ -44,7 +44,7 @@ names="$(jget "$listing" \
   '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
   'listed file names')"
 for want in video.mp4 readme.txt subtitle.srt; do
-  printf '%s\n' "$names" | grep -qx -- "$want" \
+  grep -qx -- "$want" <<<"$names" \
     || fail "fixture file '$want' missing from listing (found: $(printf '%s' "$names" | tr '\n' ' ')): $listing"
 done
 

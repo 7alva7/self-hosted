@@ -55,7 +55,7 @@ names_before="$(jget "$listing_before" \
   '"\n".join(sorted({i["name"] for i in walk(d) if i.get("type") == "file"}))' \
   'pre-restart file names')"
 for want in video.mp4 readme.txt subtitle.srt; do
-  printf '%s\n' "$names_before" | grep -qx -- "$want" \
+  grep -qx -- "$want" <<<"$names_before" \
     || fail "fixture file '$want' missing before restart: $listing_before"
 done
 

@@ -39,12 +39,23 @@ log() {
   echo "[cron:${name}] $1"
 }
 
-# Sending mail without a relay is not a failure worth reporting daily -- it is
-# a feature the operator has not configured. Say so once and stop.
-if [ "$name" = "notification-send" ] && [ -z "${SMTP_HOST:-}" ]; then
-  log "SMTP_HOST is empty -- skipping; set SMTP_HOST/SMTP_USER/SMTP_PASS/SMTP_FROM to deliver notifications"
-  exit 0
-fi
+# No job is gated on SMTP_HOST, and notification-send in particular must not
+# be. Its name is misleading: besides mailing, it writes the 7/3/1-day
+# "your vaulted content is expiring" entries into the in-app feed, and it is
+# the ONLY caller that prunes that feed to its cap (web-ui notification.go,
+# sendExpiringNotifications -> SendExpiring + PruneKeepingNewest). Skipping it
+# without a relay therefore cost an SMTP-less instance both halves: the
+# operator got no expiry warning anywhere, and the notification table grew
+# without bound.
+#
+# There is nothing left to guard. web-ui builds no mail transport when
+# SMTP_HOST is empty, and Service.Send writes the feed row first and returns
+# without attempting delivery -- so these jobs are already correct, and quiet,
+# with no mail configured.
+#
+# This comment previously said mail was this job's only output. That was true
+# before the in-app feed existed and has been wrong since; it was certified as
+# accurate twice before the expiry path was traced end to end.
 
 # Both vault jobs are pointless when the vault service itself is idled.
 case "$name" in

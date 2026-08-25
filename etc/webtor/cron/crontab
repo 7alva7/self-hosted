@@ -1,13 +1,22 @@
 # Schedules mirror the production CronJobs (infra charts/web-ui cronjobs.yaml)
 # so behaviour matches what webtor.io runs. Every entry goes through
-# run-cron-job, which sources the service environment and skips jobs whose
-# optional configuration is absent.
+# run-cron-job, which sources the service environment. The vault jobs skip
+# themselves when USE_VAULT=false; nothing skips on SMTP_HOST (see
+# run-cron-job for why that guard was removed).
 
 # Subscriptions carry their own next_check_at; this is the resolution of the
-# poller, not how often any one subscription is checked.
+# poller, not how often any one subscription is checked. Not gated on
+# SMTP_HOST: its findings land in the in-app notification feed regardless of
+# whether mail delivery is configured, so it keeps running hourly even on a
+# mail-less instance.
 17 * * * * /etc/s6-overlay/scripts/run-cron-job subscription-poll subscription poll
 0 0 * * * /etc/s6-overlay/scripts/run-cron-job cache-index-cleanup cache-index cleanup
 0 */6 * * * /etc/s6-overlay/scripts/run-cron-job enrich-popular enrich popular
+
+# Named for mail, but mail is not all it does, and it is NOT gated on
+# SMTP_HOST. It also writes the 7/3/1-day vault-expiry entries into the in-app
+# feed and is the only job that prunes that feed to its cap, so an SMTP-less
+# instance needs it exactly as much as a mail-configured one.
 0 9 * * * /etc/s6-overlay/scripts/run-cron-job notification-send notification send
 
 # Mirrors the production CronJobs. reap is web-ui's own subcommand and expires

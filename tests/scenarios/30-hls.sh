@@ -88,7 +88,7 @@ wait_for 300 "HLS manifest" curl -fsS -o "$manifest" "$url"
 head -1 "$manifest" | grep -q '#EXTM3U' || fail "not an m3u8: $(head -3 "$manifest")"
 
 # The top-level manifest may be a master playlist; follow one level down if so.
-segment_line="$(grep -v '^#' "$manifest" | head -1)"
+segment_line="$(grep -m1 -v '^#' "$manifest")"
 [ -n "$segment_line" ] || fail "manifest has no entries: $(cat "$manifest")"
 
 child="$(resolve_url "$url" "$segment_line")"
@@ -97,7 +97,7 @@ case "$segment_line" in
     media="$(mktemp)"
     wait_for 120 "media playlist" curl -fsS -o "$media" "$child"
     media_url="$child"
-    segment_line="$(grep -v '^#' "$media" | head -1)"
+    segment_line="$(grep -m1 -v '^#' "$media")"
     [ -n "$segment_line" ] || fail "media playlist has no segments: $(cat "$media")"
     child="$(resolve_url "$media_url" "$segment_line")"
     rm -f "$media"
