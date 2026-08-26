@@ -253,8 +253,45 @@ Set these to enable delivery:
 
 ## Configuring content enrichment
 
+Enrichment is what turns a release name into a title, a poster and a plot. It
+asks each configured provider in turn; with none of them set, torrents keep
+their raw names and no artwork.
+
+- **TMDB_API_KEY** - key for The Movie Database. The primary provider: it is
+  the only one that answers in languages other than English, so without it the
+  interface shows English metadata whatever the chosen language.
 - **OMDB_API_KEY** - key for OMDB API
 - **KINOPOISK_UNOFFICIAL_API_KEY** - key for KinoPoisk Unofficial API
+
+## Configuring AI features
+
+Both features below are off by default and both need **ANTHROPIC_API_KEY**;
+setting the key alone enables nothing. Calls are billed to that key, which is
+why each has its own switch and its own quota.
+
+- **ANTHROPIC_API_KEY** - key for the Anthropic API (default: unset, which
+  disables both features regardless of the switches below)
+
+AI enrichment is a fallback for the providers above: when TMDB, OMDB and
+KinoPoisk all fail to recognise a release name, Claude is asked to normalise
+it into title/year candidates, which are then searched again through those
+same providers. It never supplies metadata itself.
+
+- **AI_ENRICH_ENABLED** - enable that fallback (default: false)
+- **AI_ENRICH_MODEL** - model id (default: claude-haiku-4-5-20251001)
+- **AI_ENRICH_TIMEOUT_SECONDS** - timeout for one call (default: 30)
+- **AI_ENRICH_MAX_CANDIDATES** - how many candidates to ask for (default: 3)
+
+AI recommendations is the "describe what you want to watch" box on Discover.
+With it off, the section is not rendered at all.
+
+- **AI_RECOMMENDATIONS_ENABLED** - enable the Discover section (default: false)
+- **AI_RECOMMENDATIONS_MODEL** - model id, used for both tiers unless overridden
+  (default: claude-haiku-4-5-20251001)
+- **AI_RECOMMENDATIONS_FREE_DAILY_QUOTA** - requests per day for a free account
+  (default: 1)
+- **AI_RECOMMENDATIONS_PAID_DAILY_QUOTA** - requests per day for a paid account
+  (default: 100)
 
 ## Configring Stremio Addon Access
 
