@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 12 сервисов платформы (включая `vault`) + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) + событийная шина NATS (nats-server/nats-box, тоже не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
+`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 13 сервисов платформы (включая `vault` и `content-prober`) + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) + событийная шина NATS (nats-server/nats-box, тоже не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
 
 Общий контекст платформы (архитектура сервисов, matryoshka chaining и т.д.) — в `../CLAUDE.md`.
 
@@ -88,7 +88,17 @@ s6-overlay качается двумя тарболами: noarch (общий д
 
 Сервисы находят друг друга через переменные `<SVC>_SERVICE_HOST/PORT` (все на 127.0.0.1) — тот же механизм, что K8s-сервисы в проде. `etc/webtor/torrent-http-proxy/config.yaml` мапит matryoshka-имена (`hls`, `vod`, `arch`, `vtt`, `ext`) на сервисы через `endpointsProvider: Environment`.
 
-Карта портов: 8080 nginx (вход), 8090–8098 HTTP-сервисы, 8099 embedded S3 (versitygw, только 127.0.0.1, nginx не проксирует), 8100 vault (только 127.0.0.1, nginx не проксирует), 4222 NATS (только 127.0.0.1, nginx не проксирует), 50051/50052 gRPC (torrent-store, magnet2torrent), 6379 Redis, 5432 PostgreSQL.
+Карта портов: 8080 nginx (вход), 8081 health-проба content-prober (единственный сервис, который её слушает: остальные подчиняются `USE_PROBE=false`, а он держит собственный сервер), 8090–8098 HTTP-сервисы, 8099 embedded S3 (versitygw, только 127.0.0.1, nginx не проксирует), 8100 vault (только 127.0.0.1, nginx не проксирует), 8101 content-prober HTTP (только 127.0.0.1), 4222 NATS (только 127.0.0.1, nginx не проксирует), 50051/50052/50053 gRPC (torrent-store, magnet2torrent, content-prober), 6379 Redis, 5432 PostgreSQL.
+
+### Content-prober и две его переменные
+
+`content-prober` — единственный сервис в образе, до которого ходят двумя разными способами, и поэтому у него **две** пары переменных.
+
+`CONTENT_PROBER_SERVICE_HOST/PORT` — это gRPC-эндпоинт, и имя занято платформой: `content-transcoder` читает ровно эти переменные и дозванивается по gRPC (его собственный дефолт — 50051). Если направить их на HTTP-порт, создание сессии транскодера начинает отвечать 500 — так эта ошибка и была найдена. Сам 50051 в образе занят `torrent-store`, отсюда 50053.
+
+`CONTENT_PROBER_HTTP_SERVICE_HOST/PORT` — HTTP-эндпоинт для матрёшки `~cp`: web-ui через torrent-http-proxy спрашивает медиаинформацию файла, прежде чем решить, играть его напрямую или транскодировать. Имя не произвольное: torrent-http-proxy выводит искомую переменную из поля `name` в своём конфиге, поднимая регистр и заменяя дефисы на подчёркивания, поэтому запись там называется `content-prober-http`.
+
+Почему это важно: без `~cp` шаг пробы падает, а для контейнера, требующего транскодирования (в основном mkv), падение фатально — воспроизведение останавливается на строке «probing content media info». MP4 играется напрямую и проходит мимо этого, поэтому симптом выглядит как «ломается только mkv». Покрыто `tests/scenarios/32-probe.sh`; заметьте, что `31-transcode.sh` этого не ловит — там транскодер пробует медиа **сам**, своим gRPC-клиентом, и остаётся зелёным, пока HTTP-цепочка вообще не существует.
 
 ### Маршрутизация (etc/nginx/conf/nginx.template.conf)
 

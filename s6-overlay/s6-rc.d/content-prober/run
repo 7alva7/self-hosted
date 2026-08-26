@@ -1,0 +1,14 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+# HTTP_PORT, not WEB_PORT: this service predates the shared common-services
+# flag set and reads its own (server/main.go). The matryoshka `~cp` chain
+# reaches it over HTTP; the gRPC listener below is not used here.
+HTTP_PORT=$CONTENT_PROBER_HTTP_SERVICE_PORT
+set +a
+# --port moves the gRPC listener off its 50051 default, which torrent-store
+# already holds in this image. The flag carries no EnvVar upstream, so it has
+# to be passed on the command line. Nothing in this image dials it; it is
+# bound only because the server always binds it, and a collision would take
+# the whole service down at startup.
+/app/content-prober --port $CONTENT_PROBER_SERVICE_PORT 2>&1 | s6-log p"[content-prober]" 1

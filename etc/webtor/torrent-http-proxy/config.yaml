@@ -16,3 +16,6 @@ vtt:
 ext:
   name: external-proxy
   endpointsProvider: Environment
+cp:
+  name: content-prober-http
+  endpointsProvider: Environment

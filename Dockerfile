@@ -13,6 +13,7 @@ FROM ghcr.io/webtor-io/external-proxy:master@sha256:a7a267df98865d1e9e3c27cd4705
 FROM ghcr.io/webtor-io/torrent-web-seeder:master@sha256:50efc749fe9c55be9a6fa7082e9ad73958e6ac08ec5447136fe086fa059ddc88 AS torrent-web-seeder
 FROM ghcr.io/webtor-io/torrent-web-seeder-cleaner:main@sha256:84ffc9c054094b3c2a077b8247dc74e3ae75b7ca965b473a8ada92143e1fdba0 AS torrent-web-seeder-cleaner
 FROM ghcr.io/webtor-io/content-transcoder:master@sha256:98a3e5ea8171fd712b264c63e1d6a74c5950ff9a4a905888bd63f3235ef0411a AS content-transcoder
+FROM ghcr.io/webtor-io/content-prober:master@sha256:7aef6155fddc2d2fda159d6566ef87d1c9ab9757bd2e8f15a8c6a7674b62a472 AS content-prober
 FROM ghcr.io/webtor-io/torrent-archiver:master@sha256:d1c158eda4d39242f84981a895eece2218c14e51916f81e27d991fbbd90c7364 AS torrent-archiver
 FROM ghcr.io/webtor-io/srt2vtt:master@sha256:a78915ff19ac490253e0cba8c7b01b4c73a7e961e58120315caa7f58c14a2bbb AS srt2vtt
 FROM ghcr.io/webtor-io/torrent-http-proxy:master@sha256:66826afad417782cfffc1d91a60c5fde47cae048083a274f968e468d0f1d66ab AS torrent-http-proxy
@@ -77,6 +78,9 @@ COPY --from=nats /usr/local/bin/nats-server ./nats-server
 COPY --from=natsbox /usr/local/bin/nats ./nats
 COPY --from=content-transcoder /app/server ./content-transcoder
 COPY --from=content-transcoder /app/player ./player
+# Only the binary: it shells out to ffprobe, which this image already carries
+# for content-transcoder.
+COPY --from=content-prober /app/server ./content-prober
 COPY --from=web-ui /app/server ./web-ui/web-ui
 COPY --from=web-ui /app/templates ./web-ui/templates
 COPY --from=web-ui /app/pub ./web-ui/pub
