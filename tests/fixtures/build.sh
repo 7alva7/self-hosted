@@ -13,7 +13,13 @@ mkdir -p "$root/subs"
 # Mount the stable parent dir, not "$content": "$content" was just replaced by
 # rm -rf/mkdir, and Docker Desktop resolves a bind-mount source at mount time,
 # so a freshly recreated mount root can appear empty inside the container.
-docker run --rm -v "$here:/out" jrottenberg/ffmpeg:8-alpine \
+# Pinned by digest, like every other image this repo depends on. The tag
+# alone is not enough here: 92-cli.sh asserts the fixture's exact infohash,
+# size and file count, and those are a function of the bytes ffmpeg emits.
+# An upstream rebuild of :8-alpine changes them -- it already did once, by a
+# single byte, and the suite went red on a scenario that had nothing to do
+# with the change under test.
+docker run --rm -v "$here:/out" jrottenberg/ffmpeg:8-alpine@sha256:1278f385658510b4f8370ed4de93b279452071b56fa9db4873e6433549b35c39 \
   -nostdin -y \
   -f lavfi -i "testsrc=size=320x240:rate=15:duration=10" \
   -f lavfi -i "sine=frequency=440:duration=10" \

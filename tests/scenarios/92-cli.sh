@@ -84,14 +84,21 @@ key="$(api_key)"
 
 add_json="$(cli_add "$key")" || fail "webtor-cli add was rejected with a freshly minted, valid API key"
 
+# Compared against summary.json for the same reason as the listing below:
+# the infohash is a function of the bytes ffmpeg produced, so a literal here
+# pins this scenario to one build of the generator image rather than to the
+# behaviour under test -- whether the CLI round-trips what the instance
+# stored. files_count stays a literal: three files is the fixture's shape,
+# which make_fixture.py builds on purpose and no rebuild changes.
 python3 -c '
 import json, sys
 d = json.loads(sys.argv[1])
-assert d.get("id") == "35588686603803d20fc3d5cad7cfe37a2ca543e4", "id=%r" % (d.get("id"),)
+summary = json.load(open(sys.argv[2]))
+assert d.get("id") == summary["infohash"], "id=%r, want %r" % (d.get("id"), summary["infohash"])
 assert d.get("multi_file") is True, "multi_file=%r" % (d.get("multi_file"),)
-assert d.get("size") == 207766, "size=%r" % (d.get("size"),)
+assert d.get("size") == summary["total_length"], "size=%r, want %r" % (d.get("size"), summary["total_length"])
 assert d.get("files_count") == 3, "files_count=%r" % (d.get("files_count"),)
-' "$add_json" || fail "webtor-cli add did not report the fixture torrent's known id/size/file count: $add_json"
+' "$add_json" "$FIXTURE_DIR/summary.json" || fail "webtor-cli add did not report the fixture torrent's known id/size/file count: $add_json"
 
 id="$(printf '%s' "$add_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 
@@ -101,13 +108,22 @@ ls_json="$(cli_run "$key" --json ls "$id")" || fail "webtor-cli ls was rejected 
 # resource, not just that some JSON came back: the three file entries' names
 # and sizes must match the fixture bytes exactly (tests/fixtures/summary.json),
 # and nothing else claiming to be a file may be present.
+# The expected set is read from summary.json, which make_fixture.py writes
+# from the very bytes it packed, rather than copied into this file as
+# literals. Literals here were a standing trap: they encode one particular
+# ffmpeg build's output, so an upstream rebuild of the generator image turned
+# this scenario red over a one-byte difference in a video nobody watches.
+# The image is pinned by digest now (tests/fixtures/build.sh); reading the
+# summary means a deliberate future re-pin does not also require editing
+# numbers here, and the assertion stays about the round trip.
 python3 -c '
-import json, sys
+import json, sys, os
 d = json.loads(sys.argv[1])
-want = {("readme.txt", 33), ("subtitle.srt", 94), ("video.mp4", 207639)}
+summary = json.load(open(sys.argv[2]))
+want = {(os.path.basename(f["path"]), f["length"]) for f in summary["files"]}
 got = {(it["name"], it["size"]) for it in d.get("items", []) if it.get("type") == "file"}
 assert got == want, "file entries = %r, want %r" % (got, want)
-' "$ls_json" || fail "webtor-cli ls did not list the fixture torrents own three files with their known sizes: $ls_json"
+' "$ls_json" "$FIXTURE_DIR/summary.json" || fail "webtor-cli ls did not list the fixture torrents own three files with their known sizes: $ls_json"
 
 echo "PASS-detail: round trip via webtor-cli add + ls matched the fixture (id=$id)"
 
