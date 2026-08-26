@@ -42,12 +42,31 @@ case "$vod_url" in
 esac
 probe_url="${vod_url%%~vod/*}~cp?${vod_url#*\?}"
 
-probe_json="$(mktemp)"
-trap 'rm -f "$probe_json"' EXIT
+# From INSIDE the container, not from the host, because that is where web-ui
+# calls from -- and the difference is the whole point.
+#
+# torrent-http-proxy rejects a request whose client IP does not match the
+# remoteAddress claim in the token, and its flag defaults to on. A probe issued
+# from the host arrives with the same IP the browser had, so it passes; web-ui
+# issues its own from 127.0.0.1 with that same browser token and is answered
+# 429. The first version of this scenario ran from the host, went green, and
+# proved nothing about the path that was actually broken.
+#
 # Cold start: the prober fetches enough of the file through the seeder to run
 # ffprobe over it, so give it room.
-wait_for 120 "content-prober answering the ~cp chain" \
-  curl -fsS -o "$probe_json" "$probe_url"
+probe_json="$(mktemp)"
+trap 'rm -f "$probe_json"' EXIT
+# Through the container's own nginx on 8080 -- the published host port maps to
+# it -- and NOT straight at torrent-http-proxy's 8095. Going direct makes the
+# proxy classify the request as internal and skip the session-IP check
+# entirely, which is a third path that neither the browser nor web-ui takes;
+# the second version of this scenario did that and went green against an image
+# where the check was still on.
+internal_url="$(printf '%s' "$probe_url" | sed -E "s#^http://localhost:[0-9]+/#http://127.0.0.1:8080/#")"
+fetch_probe() {
+  webtor_exec wget -q -O - "$internal_url" > "$probe_json" 2>/dev/null && [ -s "$probe_json" ]
+}
+wait_for 120 "content-prober answering the ~cp chain from inside the container" fetch_probe
 
 # ffprobe's own shape, not merely "some JSON came back": the fixture is one
 # h264 video stream plus one audio stream (tests/fixtures/build.sh), so a
