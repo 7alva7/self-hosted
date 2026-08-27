@@ -289,9 +289,13 @@ With it off, the section is not rendered at all.
 - **AI_RECOMMENDATIONS_MODEL** - model id, used for both tiers unless overridden
   (default: claude-haiku-4-5-20251001)
 - **AI_RECOMMENDATIONS_FREE_DAILY_QUOTA** - requests per day for a free account
-  (default: 1)
+  (default: 100 in this image; upstream web-ui defaults to 1). Without a claims
+  provider every account is free-tier, so this is the quota everyone gets here;
+  the default matches the paid cap and only serves as a backstop against a
+  runaway client loop burning your Anthropic bill
 - **AI_RECOMMENDATIONS_PAID_DAILY_QUOTA** - requests per day for a paid account
-  (default: 100)
+  (default: 100). No account is paid without a claims provider, so this has no
+  effect in this image
 
 ## Configring Stremio Addon Access
 
