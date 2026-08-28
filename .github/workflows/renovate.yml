@@ -1,0 +1,37 @@
+# Runs Renovate against this repository on a schedule. The repo has carried
+# a renovate.json since the digest-pinning rework, but no Renovate app was
+# ever installed, so every component bump was in fact made by hand. This
+# workflow is what actually executes that config.
+#
+# The token is a fine-grained PAT (secret RENOVATE_TOKEN) scoped to this
+# repository only: Contents RW, Pull requests RW, Commit statuses R, Checks R.
+# A PAT rather than the workflow's own GITHUB_TOKEN because PRs created with
+# GITHUB_TOKEN do not trigger other workflows — the smoke tests would never
+# run on Renovate's PRs, and automerge would wait on checks that cannot
+# appear.
+name: Renovate
+
+on:
+  schedule:
+    # Daily. A bump PR opened on one run has its smoke checks evaluated and
+    # is automerged on the next, so the digest-to-main latency is ~a day —
+    # well inside the weekly release cadence.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@v46.2.4
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}
+        env:
+          RENOVATE_REPOSITORIES: webtor-io/self-hosted
+          # Config lives in renovate.json in the repo; no onboarding PR.
+          RENOVATE_ONBOARDING: "false"
+          LOG_LEVEL: info

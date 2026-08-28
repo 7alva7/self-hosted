@@ -4,12 +4,14 @@
   "labels": ["dependencies"],
   "packageRules": [
     {
-      "description": "Webtor components: keep the tag, bump the digest, one PR each",
+      "description": "Webtor components: keep the tag, bump the digest, one PR each. Automerged once the smoke checks pass — by the time a digest lands here the same build has already been serving production webtor.io, so green CI is the only remaining question. Renovate merges these itself on a later run (platformAutomerge off) rather than relying on GitHub native auto-merge, which would require branch protection.",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ghcr.io/webtor-io/**"],
       "pinDigests": true,
       "groupName": null,
-      "schedule": ["at any time"]
+      "schedule": ["at any time"],
+      "automerge": true,
+      "platformAutomerge": false
     },
     {
       "description": "Base images move rarely; group them to keep PR noise down",
