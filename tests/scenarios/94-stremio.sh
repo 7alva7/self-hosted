@@ -29,16 +29,17 @@
 # -- alias(/token/<uuid>/stremio/) + "manifest.json" -- is rendered inline
 # into the plain GET /profile response (profile/stremio.html, same
 # non-async-fragment pattern WebDAV uses; unlike S3's XHR-only fragment in
-# 91-s3-webui.sh). Unlike WebDAV's alias (services/url_alias, proxy mode,
-# rewritten in-process), the Stremio alias resolves in *redirect* mode (a
-# plain 301 to /token/<uuid>/stremio/manifest.json) -- confirmed by reading
-# handlers/profile/handler.go's getStremioAddonURL (ual.Get(..., false)) vs
-# getWebDAVURL (ual.Get(..., true)), and empirically: curl -D- on the alias
-# URL returns a Location header, not a proxied body. This scenario follows
-# that redirect once to recover the token-bearing URL, then talks
-# ?token=<uuid> directly for the scope-gated endpoints, mirroring what the
-# real Stremio client does after installing (it resolves resource URLs
-# relative to wherever the manifest it fetched actually lived).
+# 91-s3-webui.sh). The alias resolves in *proxy* mode, same as WebDAV's
+# (services/url_alias, rewritten in-process): the alias answers with the
+# target's body directly and the token-bearing /token/<uuid>/... path never
+# leaves the server. That is deliberate (web-ui d3aaf6b3): the alias used to
+# resolve as a 301 whose Location carried the raw token, which the Stremio
+# client then stored and replayed -- a capability leak this scenario now
+# guards against by asserting the alias does NOT redirect. All scope-gated
+# requests below go through the alias base (/s/<code>/...), which is exactly
+# what the real Stremio client does after installing: it resolves
+# catalog/stream/meta URLs relative to wherever the manifest it fetched
+# actually lived.
 #
 # Re-runnable against a warm container: POST /stremio/url/generate is
 # idempotent, same as WebDAV's; every request below is a read against an
@@ -115,27 +116,27 @@ case "$addon_url" in
   *) fail "Stremio addon URL does not look like the documented /s/<code>/manifest.json alias: $addon_url" ;;
 esac
 
-# Follow the alias's one redirect hop (not -L: the point is to read the
-# Location header, which carries the /token/<uuid>/stremio/manifest.json
-# path this scenario needs, not just to land on the final body).
-location="$(curl -sS -o /dev/null -D - "$addon_url" | tr -d '\r' | grep -i '^location:' | sed -E 's/^[Ll]ocation: *//')"
-case "$location" in
-  /token/*/stremio/manifest.json) : ;;
-  *) fail "GET $addon_url did not redirect to a /token/<uuid>/stremio/manifest.json path: got Location '$location'" ;;
-esac
-# Everything up to and including the trailing slash before manifest.json --
-# the base every scope-gated resource URL below is built from, same as a
-# real Stremio client resolving catalog/stream/meta relative to the manifest
-# URL it fetched.
-token_base="${location%manifest.json}"
+# The alias must answer in place, NOT redirect: a Location here would carry
+# the raw token to the client, which is the exact leak web-ui d3aaf6b3
+# closed. -D- with no -L so a 301 shows up as a 301, not as its target.
+headers_and_status="$(curl -sS -o /dev/null -D - -w 'HTTPSTATUS:%{http_code}' "$addon_url" | tr -d '\r')"
+alias_status="${headers_and_status##*HTTPSTATUS:}"
+assert_eq "$alias_status" "200" "GET $addon_url (proxied alias) status"
+location="$(printf '%s' "$headers_and_status" | grep -i '^location:' || true)"
+[ -z "$location" ] || fail "GET $addon_url answered with a Location header -- the alias is redirecting and leaking the token-bearing URL: '$location'"
 
-resolved_manifest="$(curl --fail-with-body -sS "$BASE_URL$location")" \
-  || fail "GET $location (resolved manifest, token-bearing path) was rejected"
+# The base every scope-gated resource URL below is built from -- the alias
+# itself, same as a real Stremio client resolving catalog/stream/meta
+# relative to the manifest URL it fetched.
+alias_base="${addon_url%manifest.json}"
+
+resolved_manifest="$(curl --fail-with-body -sS "$addon_url")" \
+  || fail "GET $addon_url (proxied manifest) was rejected"
 python3 -c '
 import json, sys
 d = json.loads(sys.argv[1])
 assert d.get("id") == "org.stremio.webtor.io", "id=%r" % (d.get("id"),)
-' "$resolved_manifest" || fail "resolved token-bearing manifest URL did not return the documented manifest shape: $resolved_manifest"
+' "$resolved_manifest" || fail "proxied alias manifest URL did not return the documented manifest shape: $resolved_manifest"
 
 # --- 3. Credentialed catalog/stream succeed with the real (empty) shape --
 # An empty library is not an error: catalog answers {"metas": ...} and
@@ -143,7 +144,7 @@ assert d.get("id") == "org.stremio.webtor.io", "id=%r" % (d.get("id"),)
 # catalog id the manifest advertises for both types (services/stremio/
 # manifest.go's catalogID constant) -- not a fixture-derived value, so no
 # torrent needs to exist in the library for this to mean anything.
-catalog_body="$(curl --fail-with-body -sS "$BASE_URL${token_base}catalog/movie/Webtor.io.json")" \
+catalog_body="$(curl --fail-with-body -sS "${alias_base}catalog/movie/Webtor.io.json")" \
   || fail "credentialed GET .../catalog/movie/Webtor.io.json was rejected"
 python3 -c '
 import json, sys
@@ -155,7 +156,7 @@ assert "metas" in d, "response has no \"metas\" key: %r" % (d,)
 assert not d["metas"], "metas=%r, want empty (null or []) for a fresh library" % (d["metas"],)
 ' "$catalog_body" || fail "credentialed catalog response was not the documented (empty) CatalogResponse shape: $catalog_body"
 
-stream_body="$(curl --fail-with-body -sS "$BASE_URL${token_base}stream/movie/tt0000000.json")" \
+stream_body="$(curl --fail-with-body -sS "${alias_base}stream/movie/tt0000000.json")" \
   || fail "credentialed GET .../stream/movie/tt0000000.json was rejected"
 python3 -c '
 import json, sys
