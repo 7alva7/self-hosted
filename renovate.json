@@ -14,10 +14,23 @@
       "platformAutomerge": false
     },
     {
-      "description": "Base images move rarely; group them to keep PR noise down",
+      "description": "Base images (alpine, nats, nats-box, versitygw, plus nginx in the test compose): non-major bumps are grouped into one PR, wait 7 days after the upstream release so regressions surface elsewhere first, then automerge on green smoke. Unlike webtor components these never ran anywhere before landing here, hence the bake time.",
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["alpine"],
-      "groupName": "base images"
+      "matchPackageNames": ["alpine", "nats", "natsio/nats-box", "ghcr.io/versity/versitygw", "nginx"],
+      "matchUpdateTypes": ["digest", "patch", "minor", "pin", "pinDigest"],
+      "groupName": "base images",
+      "minimumReleaseAge": "7 days",
+      "automerge": true,
+      "platformAutomerge": false
+    },
+    {
+      "description": "Base-image majors (e.g. an alpine version bump changes musl/openssl for every binary in the image): a human reads the release notes first. The PR is only created after it is approved on the dependency dashboard, and is never automerged.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine", "nats", "natsio/nats-box", "ghcr.io/versity/versitygw", "nginx"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "automerge": false,
+      "dependencyDashboardApproval": true
     }
   ]
 }
