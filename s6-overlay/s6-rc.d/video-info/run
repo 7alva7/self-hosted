@@ -1,0 +1,34 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[video-info]" 1
+}
+
+# OpenSubtitles follows the enrichment-provider contract (README,
+# "Configuring content enrichment"): a provider key alone enables the
+# feature, no separate switch -- unlike the Anthropic key there is no
+# per-call bill to guard, quota exhaustion just stops the lookups.
+# rest-api mirrors this gate: without the key it omits the subtitles leg
+# from exports, so nothing ever calls a sleeping service.
+if [ -z "${OSDB_API_KEY:-}" ]; then
+  log "OSDB_API_KEY is not set -- not starting video-info; the player will"
+  log "not offer OpenSubtitles tracks. Get a free API key at"
+  log "https://www.opensubtitles.com/en/consumers and pass it with"
+  log "-e OSDB_API_KEY=... to enable them."
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+
+set -a
+WEB_HOST=$VIDEO_INFO_SERVICE_HOST
+WEB_PORT=$VIDEO_INFO_SERVICE_PORT
+# Fetched subtitle files and search answers go to the embedded S3 and
+# Redis, so a film looked up once does not spend the key's quota again.
+USE_S3=true
+AWS_BUCKET=$VIDEO_INFO_AWS_BUCKET
+set +a
+/app/video-info 2>&1 | s6-log p"[video-info]" 1

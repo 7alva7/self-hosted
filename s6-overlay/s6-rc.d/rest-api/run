@@ -7,6 +7,15 @@ EXPORT_API_SECRET=$API_SECRET
 EXPORT_USE_SUBDOMAINS=false
 EXPORT_PATH_PREFIX=/torrent-http-proxy/
 EXPORT_DOMAIN=$DOMAIN
+# The subtitles export leg exists only while video-info is reachable:
+# rest-api skips the exporter when both vars are empty/zero. video-info
+# itself gates on OSDB_API_KEY, so mirror that gate here -- otherwise
+# every export would carry a subtitles.json URL pointing at a sleeping
+# service.
+if [ -z "${OSDB_API_KEY:-}" ]; then
+  VIDEO_INFO_SERVICE_HOST=
+  VIDEO_INFO_SERVICE_PORT=0
+fi
 TORRENT_HTTP_PROXY_SERVICE_PORT=$WEB_PORT
 TORRENT_HTTP_PROXY_SERVICE_HOST=127.0.0.1
 WEB_PORT=$REST_API_SERVICE_PORT

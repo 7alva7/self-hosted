@@ -17,6 +17,7 @@ FROM ghcr.io/webtor-io/content-prober:master@sha256:7aef6155fddc2d2fda159d6566ef
 FROM ghcr.io/webtor-io/torrent-archiver:master@sha256:aa7691ca6d90782176cbf3455a289501d5a9684b5ad703789bf8acdc912a6ac2 AS torrent-archiver
 FROM ghcr.io/webtor-io/srt2vtt:master@sha256:7de27e2b93a980639685e8d29451f6a2c3c05219041c5c0e156e960e8138cac8 AS srt2vtt
 FROM ghcr.io/webtor-io/subtitle-translate:master@sha256:1e0d54d90fbd67746cb72c395794afdc5f6770fc036a545db59841f12051bd04 AS subtitle-translate
+FROM ghcr.io/webtor-io/video-info:master@sha256:bf81075df9c09ac41aefd2abd1ca2d880855d051b75dca5f5bdc579a276acb8a AS video-info
 FROM ghcr.io/webtor-io/torrent-http-proxy:master@sha256:d21c9fd3bcb55c20243603a55a4d4e62c2f3a0155f1964ac7f8088cb5b7b817e AS torrent-http-proxy
 FROM ghcr.io/webtor-io/rest-api:main@sha256:2b9241af30d66c086a691e3a14c7a4a0265469dadcf80d237a04cfb6aa1f5eb0 AS rest-api
 FROM ghcr.io/webtor-io/web-ui:main@sha256:39e40f1c1881d569fcdb10305e365a78234f86161b2b2be2fe78fc7490bdfae3 AS web-ui
@@ -73,6 +74,7 @@ COPY --from=torrent-web-seeder-cleaner /server ./torrent-web-seeder-cleaner
 COPY --from=torrent-archiver /server ./torrent-archiver
 COPY --from=srt2vtt /server ./srt2vtt
 COPY --from=subtitle-translate /server ./subtitle-translate
+COPY --from=video-info /server ./video-info
 COPY --from=torrent-http-proxy /server ./torrent-http-proxy
 COPY --from=rest-api /server ./rest-api
 COPY --from=versitygw /usr/local/bin/versitygw ./versitygw

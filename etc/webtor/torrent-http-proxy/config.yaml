@@ -22,3 +22,6 @@ cp:
 tr:
   name: subtitle-translate
   endpointsProvider: Environment
+vi:
+  name: video-info
+  endpointsProvider: Environment

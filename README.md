@@ -11,7 +11,8 @@ This is the self-hosted version of [webtor.io](https://webtor.io), implemented a
    - **Audio:** `mp3`, `wav`, `ogg`, `flac`, `m4a`
 - **Download Entire Torrent as a ZIP Archive:** Download your torrent as a ZIP archive on-the-fly while preserving the original directory structure, without requiring a torrent client.
 - **Personal Library:** Organize your own collection by adding torrents to your account. Movies and series will be detected automatically!
-- **AI subtitles:** Translate embedded or uploaded subtitle tracks into your language on the fly, right in the player (needs an Anthropic API key, see "Configuring AI features").
+- **Subtitles from OpenSubtitles:** Matching subtitle tracks are found and offered in the player automatically (needs a free OpenSubtitles API key, see "Configuring OpenSubtitles").
+- **AI subtitles:** Translate subtitle tracks -- embedded, uploaded or found on OpenSubtitles -- into your language on the fly, right in the player (needs an Anthropic API key, see "Configuring AI features").
 - **Stremio integration** Just install the addon using the link from profile and start watching your library on TV with Stremio.
 - **Developer-friendly** With the [SDK](https://github.com/webtor-io/embed-sdk-js) you can provide your users with the ability to watch torrent-videos online on your website.
 
@@ -264,6 +265,23 @@ their raw names and no artwork.
 - **OMDB_API_KEY** - key for OMDB API
 - **KINOPOISK_UNOFFICIAL_API_KEY** - key for KinoPoisk Unofficial API
 
+## Configuring OpenSubtitles
+
+With an OpenSubtitles API key the player offers subtitle tracks found for the
+exact file (by hash) in every language OpenSubtitles has. Like the enrichment
+providers above, the key alone enables the feature; without it the player
+only shows subtitles embedded in the file or uploaded by you. Search answers
+and fetched subtitle files are cached in the embedded S3 and Redis, so a film
+looked up once does not spend the key's quota again.
+
+- **OSDB_API_KEY** - OpenSubtitles API key (default: unset, which disables
+  the lookups). A free consumer key from
+  <https://www.opensubtitles.com/en/consumers> is enough.
+- **OSDB_USER** / **OSDB_PASS** - optional OpenSubtitles account login; a VIP
+  account raises the daily download quota
+- **OSDB_RATE** - requests per second against the OpenSubtitles API
+  (default: 1)
+
 ## Configuring AI features
 
 The features below are off by default and all need **ANTHROPIC_API_KEY**;
@@ -299,9 +317,9 @@ With it off, the section is not rendered at all.
   effect in this image
 
 AI subtitles is the "Translate to <your language>" track in the player's
-subtitle picker. It translates the film's embedded subtitle tracks and
-subtitle files you upload yourself; searching OpenSubtitles is not part of
-this image. A film is translated progressively while you watch, the finished
+subtitle picker. It translates the film's subtitle tracks -- embedded,
+uploaded by you, or found through OpenSubtitles when that is configured
+(see above). A film is translated progressively while you watch, the finished
 translation is stored in the embedded S3, so any later viewing of the same
 file and language is served from cache and costs nothing.
 
