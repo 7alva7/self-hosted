@@ -11,6 +11,7 @@ This is the self-hosted version of [webtor.io](https://webtor.io), implemented a
    - **Audio:** `mp3`, `wav`, `ogg`, `flac`, `m4a`
 - **Download Entire Torrent as a ZIP Archive:** Download your torrent as a ZIP archive on-the-fly while preserving the original directory structure, without requiring a torrent client.
 - **Personal Library:** Organize your own collection by adding torrents to your account. Movies and series will be detected automatically!
+- **AI subtitles:** Translate embedded or uploaded subtitle tracks into your language on the fly, right in the player (needs an Anthropic API key, see "Configuring AI features").
 - **Stremio integration** Just install the addon using the link from profile and start watching your library on TV with Stremio.
 - **Developer-friendly** With the [SDK](https://github.com/webtor-io/embed-sdk-js) you can provide your users with the ability to watch torrent-videos online on your website.
 
@@ -265,12 +266,12 @@ their raw names and no artwork.
 
 ## Configuring AI features
 
-Both features below are off by default and both need **ANTHROPIC_API_KEY**;
+The features below are off by default and all need **ANTHROPIC_API_KEY**;
 setting the key alone enables nothing. Calls are billed to that key, which is
 why each has its own switch and its own quota.
 
 - **ANTHROPIC_API_KEY** - key for the Anthropic API (default: unset, which
-  disables both features regardless of the switches below)
+  disables all features below regardless of their switches)
 
 AI enrichment is a fallback for the providers above: when TMDB, OMDB and
 KinoPoisk all fail to recognise a release name, Claude is asked to normalise
@@ -296,6 +297,20 @@ With it off, the section is not rendered at all.
 - **AI_RECOMMENDATIONS_PAID_DAILY_QUOTA** - requests per day for a paid account
   (default: 100). No account is paid without a claims provider, so this has no
   effect in this image
+
+AI subtitles is the "Translate to <your language>" track in the player's
+subtitle picker. It translates the film's embedded subtitle tracks and
+subtitle files you upload yourself; searching OpenSubtitles is not part of
+this image. A film is translated progressively while you watch, the finished
+translation is stored in the embedded S3, so any later viewing of the same
+file and language is served from cache and costs nothing.
+
+- **SUBTITLE_TRANSLATE_ENABLED** - offer AI subtitle tracks (default: false)
+- **SUBTITLE_TRANSLATE_MODEL** - model id (default: claude-haiku-4-5-20251001)
+
+With the switch on but no key, or the key set but the switch off, the track
+is not offered and the `subtitle-translate` service explains in `docker logs`
+which half is missing.
 
 ## Configring Stremio Addon Access
 

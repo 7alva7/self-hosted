@@ -19,3 +19,6 @@ ext:
 cp:
   name: content-prober-http
   endpointsProvider: Environment
+tr:
+  name: subtitle-translate
+  endpointsProvider: Environment

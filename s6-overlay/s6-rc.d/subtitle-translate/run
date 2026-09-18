@@ -1,0 +1,38 @@
+#!/command/with-contenv sh
+set -a
+source /etc/webtor/common.env
+source /etc/webtor/secrets/s3.env
+set +a
+
+log() {
+  echo "$1" | s6-log p"[subtitle-translate]" 1
+}
+
+# AI subtitles follow the AI-features contract of this image (see README,
+# "Configuring AI features"): ANTHROPIC_API_KEY alone enables nothing, and
+# the switch alone enables nothing -- calls are billed to the key, so
+# billing is opt-in. Explain which half is missing rather than just idling.
+if [ "${SUBTITLE_TRANSLATE_ENABLED:-false}" != "true" ]; then
+  log "AI subtitles are off (default) -- not starting subtitle-translate."
+  log "Set SUBTITLE_TRANSLATE_ENABLED=true and ANTHROPIC_API_KEY to offer"
+  log "AI-translated subtitle tracks in the player."
+  # s6 restarts a longrun that exits, so idle rather than exiting.
+  exec sleep infinity
+fi
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  log "SUBTITLE_TRANSLATE_ENABLED=true but ANTHROPIC_API_KEY is not set --"
+  log "not starting subtitle-translate; the player will not offer AI"
+  log "subtitle tracks. Pass -e ANTHROPIC_API_KEY=... to enable them."
+  exec sleep infinity
+fi
+
+set -a
+WEB_HOST=$SUBTITLE_TRANSLATE_SERVICE_HOST
+WEB_PORT=$SUBTITLE_TRANSLATE_SERVICE_PORT
+# Finished translations go to the embedded S3 so a film translated once
+# stays translated across container recreation; in-flight progress lives
+# in Redis either way.
+USE_S3=true
+AWS_BUCKET=$SUBTITLE_TRANSLATE_AWS_BUCKET
+set +a
+/app/subtitle-translate 2>&1 | s6-log p"[subtitle-translate]" 1

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Что это
 
-`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 13 сервисов платформы (включая `vault` и `content-prober`) + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) + событийная шина NATS (nats-server/nats-box, тоже не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
+`self-hosted` — all-in-one Docker-образ Webtor (`ghcr.io/webtor-io/self-hosted`): 14 сервисов платформы (включая `vault`, `content-prober` и `subtitle-translate`) + nginx + embedded PostgreSQL + Redis + embedded S3-хранилище (versitygw, не webtor-компонент) + событийная шина NATS (nats-server/nats-box, тоже не webtor-компонент) в одном контейнере под супервизором s6-overlay v3. **Собственного Go/JS-кода здесь нет** — репозиторий состоит из Dockerfile, s6-описаний сервисов и шаблонов конфигов. Ничего не компилируется: Dockerfile копирует готовые бинарники и ассеты из прекомпилированных образов компонентов, опубликованных CI каждого сервисного репозитория (`ghcr.io/webtor-io/<svc>`), закреплённых по тегу и дайджесту.
 
 Общий контекст платформы (архитектура сервисов, matryoshka chaining и т.д.) — в `../CLAUDE.md`.
 
@@ -30,7 +30,7 @@ tests/run.sh webtor-self-hosted:assembly
 
 `tests/run.sh [image]` без аргумента по умолчанию тянет `ghcr.io/webtor-io/self-hosted:latest`. На момент написания этот тег ещё не содержит фикс подписи export-ссылок rest-api (`fix: sign rest-api export urls so torrent-http-proxy accepts them`), поэтому голый прогон падает на сценариях, завязанных на export (архив, HLS, субтитры). До выхода релиза с этим фиксом гонять сьют нужно на локально собранном образе — соберите его командой выше и передайте `tests/run.sh` явным аргументом.
 
-**Релиз:** пуш тега `v*` запускает GitHub Actions (`.github/workflows/docker-image.yml`), который делегирует сборку и публикацию multi-arch-манифеста (amd64+arm64) переиспользуемому workflow `webtor-io/.github/.github/workflows/docker-multiarch.yml`. Все 13 компонентных репозиториев используют тот же workflow и публикуют свои образы под обе архитектуры. PR-гейт (`.github/workflows/test.yml`) собирает образ и гоняет `tests/run.sh` нативно на amd64- и arm64-раннерах; обе ноги обязательны.
+**Релиз:** пуш тега `v*` запускает GitHub Actions (`.github/workflows/docker-image.yml`), который делегирует сборку и публикацию multi-arch-манифеста (amd64+arm64) переиспользуемому workflow `webtor-io/.github/.github/workflows/docker-multiarch.yml`. Все 14 компонентных репозиториев используют тот же workflow и публикуют свои образы под обе архитектуры. PR-гейт (`.github/workflows/test.yml`) собирает образ и гоняет `tests/run.sh` нативно на amd64- и arm64-раннерах; обе ноги обязательны.
 
 Порт хоста для тестов задаётся `WEBTOR_HOST_PORT` (по умолчанию 8080) — пригодится, когда 8080 занят локальным дев-сервером: `WEBTOR_HOST_PORT=18080 tests/run.sh <image>`.
 
@@ -49,7 +49,7 @@ tests/run.sh webtor-self-hosted:assembly
 ### Сборка (Dockerfile)
 
 Multi-stage, но ничего не компилируется. Каждый `FROM ghcr.io/webtor-io/<svc>:<tag>@sha256:<digest> AS <svc>` — это уже готовый образ, собранный CI соответствующего сервисного репозитория (тег и дайджест зафиксированы вместе, см. «Как обновить версию сервиса»). Финальный стейдж (`FROM alpine:${ALPINE_VER}`) вытаскивает артефакты через `COPY --from=<svc> <src> <dst>`:
-- у большинства сервисов — один бинарник `/server` → `/app/<service>` (torrent-store, magnet2torrent, external-proxy, torrent-web-seeder, torrent-web-seeder-cleaner, torrent-archiver, srt2vtt, torrent-http-proxy, rest-api)
+- у большинства сервисов — один бинарник `/server` → `/app/<service>` (torrent-store, magnet2torrent, external-proxy, torrent-web-seeder, torrent-web-seeder-cleaner, torrent-archiver, srt2vtt, subtitle-translate, torrent-http-proxy, rest-api)
 - `content-transcoder` — `/app/server` → `/app/content-transcoder`, плюс `/app/player` → `/app/player`
 - `web-ui` — `/app/server` → `/app/web-ui/web-ui`, плюс `templates/`, `pub/`, `migrations/`, `assets/dist` под тем же `/app/web-ui/`: своя рабочая директория, как у vault
 - `nginx-vod` — весь `/usr/local/nginx` целиком (бинарник + уже вкомпилированные модули Kaltura `nginx-vod-module`/`nginx-secure-token-module`)
